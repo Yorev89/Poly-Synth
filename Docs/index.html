@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#2E2A26">
+<title>The Synth Project</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Source+Serif+4:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { background-color: #2E2A26; }
+body { background-color: #2E2A26; color: #F0EDE6; font-family: 'Source Serif 4', serif; min-height: 100vh; }
+
+nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; background-color: rgba(46,42,38,0.97); border-bottom: 1px solid #332F2A; }
+.nav-inner { max-width: 900px; margin: 0 auto; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; height: 56px; }
+.nav-logo { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15px; color: #E8A838; cursor: pointer; letter-spacing: 0.04em; background: none; border: none; }
+.nav-links { display: flex; gap: 28px; }
+.nav-btn { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #A09890; letter-spacing: 0.06em; text-transform: uppercase; background: none; border: none; border-bottom: 1px solid transparent; padding-bottom: 2px; cursor: pointer; }
+.nav-btn.active { color: #E8A838; border-bottom-color: #E8A838; }
+.hamburger { display: none; background: none; border: none; color: #A09890; font-size: 22px; cursor: pointer; }
+.mobile-menu { display: none; background-color: #252320; border-top: 1px solid #332F2A; padding: 12px 24px 16px; }
+.mobile-menu.open { display: block; }
+.mobile-btn { display: block; width: 100%; font-family: 'Space Grotesk', sans-serif; font-size: 14px; color: #A09890; letter-spacing: 0.06em; text-transform: uppercase; background: none; border: none; padding: 10px 0; text-align: left; cursor: pointer; }
+.mobile-btn.active { color: #E8A838; }
+
+main { padding-top: 56px; }
+.page { display: none; }
+.page.active { display: block; }
+
+.container { max-width: 900px; margin: 0 auto; padding: 64px 24px; }
+.section-label { font-family: 'Space Grotesk', sans-serif; font-size: 11px; color: #A87820; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 16px; }
+h1 { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: clamp(32px, 5vw, 58px); line-height: 1.1; color: #F0EDE6; margin-bottom: 24px; }
+h1 .accent { color: #E8A838; }
+h2 { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: clamp(26px, 4vw, 40px); color: #F0EDE6; margin-bottom: 40px; line-height: 1.2; }
+h3 { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 24px; color: #F0EDE6; margin-bottom: 16px; }
+p { font-family: 'Source Serif 4', serif; font-size: 17px; color: #A09890; line-height: 1.8; margin-bottom: 20px; }
+
+.hero { border-bottom: 1px solid #332F2A; padding: 72px 0 0; background-color: #2E2A26; }
+.hero-inner { max-width: 900px; margin: 0 auto; padding: 0 24px; }
+.hero p { font-size: 18px; max-width: 620px; }
+canvas { width: 100%; height: 130px; display: block; }
+
+.spec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background-color: #332F2A; border: 1px solid #332F2A; margin-bottom: 48px; }
+.spec-cell { background-color: #2E2A26; padding: 20px 22px; }
+.spec-label { font-family: 'Space Grotesk', sans-serif; font-size: 10px; color: #605850; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 6px; }
+.spec-value { font-family: 'Space Grotesk', sans-serif; font-size: 13px; color: #F0EDE6; font-weight: 500; }
+
+.btn-primary { font-family: 'Space Grotesk', sans-serif; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; background-color: #E8A838; color: #2E2A26; border: none; padding: 13px 26px; cursor: pointer; font-weight: 600; }
+.btn-secondary { font-family: 'Space Grotesk', sans-serif; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; background: none; color: #E8A838; border: 1px solid #A87820; padding: 13px 26px; cursor: pointer; font-weight: 600; }
+.btn-row { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 40px; }
+
+.intro-text { max-width: 640px; }
+.card { background-color: #252320; border: 1px solid #332F2A; padding: 28px; margin-bottom: 28px; }
+.card-label { font-family: 'Space Grotesk', sans-serif; font-size: 11px; color: #605850; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 18px; }
+.table-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #332F2A; gap: 16px; }
+.table-key { font-family: 'Source Serif 4', serif; font-size: 14px; color: #A09890; }
+.table-val { font-family: 'Space Grotesk', sans-serif; font-size: 13px; color: #F0EDE6; text-align: right; flex-shrink: 0; }
+.table-val.green { color: #4A7C59; font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; }
+.table-val.amber { color: #A87820; font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; }
+
+.photo-block { background-color: #252320; border: 1px solid #332F2A; border-left: 3px solid #A87820; padding: 40px 28px; margin-bottom: 40px; text-align: center; }
+.photo-block p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #605850; letter-spacing: 0.08em; text-transform: uppercase; margin: 0; }
+.photo-inline { background-color: #252320; border: 1px solid #332F2A; border-left: 3px solid #A87820; padding: 20px; margin-top: 28px; }
+.photo-inline p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #605850; margin: 0; letter-spacing: 0.06em; }
+
+.files-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background-color: #332F2A; }
+.files-cell { background-color: #2E2A26; padding: 16px 20px; }
+.files-label { font-family: 'Space Grotesk', sans-serif; font-size: 10px; color: #605850; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px; }
+.files-val { font-family: 'Space Grotesk', sans-serif; font-size: 13px; color: #A87820; }
+
+.build-layout { display: flex; gap: 44px; align-items: flex-start; }
+.chapter-nav { min-width: 155px; flex-shrink: 0; }
+.ch-btn { display: block; width: 100%; text-align: left; background: none; border: none; border-bottom: 1px solid #332F2A; cursor: pointer; padding: 11px 0; }
+.ch-num { font-family: 'Space Grotesk', sans-serif; font-size: 10px; color: #605850; letter-spacing: 0.1em; display: block; margin-bottom: 3px; }
+.ch-num.active { color: #E8A838; }
+.ch-title { font-family: 'Space Grotesk', sans-serif; font-size: 13px; color: #A09890; }
+.ch-title.active { color: #E8A838; font-weight: 600; }
+.chapter-content { flex: 1; min-width: 0; }
+.ch-header { border-left: 2px solid #E8A838; padding-left: 24px; margin-bottom: 28px; }
+.ch-subtitle { font-family: 'Space Grotesk', sans-serif; font-size: 11px; color: #A87820; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px; }
+
+.next-card { background-color: #252320; border: 1px solid #332F2A; border-top: 2px solid #E8A838; padding: 36px; max-width: 640px; margin-bottom: 28px; }
+.next-card-dim { background-color: #252320; border: 1px solid #332F2A; border-top: 2px solid #A87820; padding: 36px; max-width: 640px; margin-bottom: 40px; }
+.next-label { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #E8A838; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 14px; }
+.next-label-dim { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #A87820; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 14px; }
+
+.res-category { font-family: 'Space Grotesk', sans-serif; font-size: 11px; color: #E8A838; letter-spacing: 0.12em; text-transform: uppercase; padding-bottom: 12px; border-bottom: 1px solid #332F2A; margin-bottom: 18px; }
+.res-item { padding: 18px 0; border-bottom: 1px solid #332F2A; }
+.res-name { font-family: 'Space Grotesk', sans-serif; font-size: 15px; color: #F0EDE6; font-weight: 500; margin-bottom: 7px; }
+.res-note { font-family: 'Source Serif 4', serif; font-size: 15px; color: #A09890; line-height: 1.7; }
+
+footer { border-top: 1px solid #332F2A; padding: 28px 24px; text-align: center; background-color: #2E2A26; }
+footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #605850; letter-spacing: 0.06em; margin: 0; }
+
+@media (max-width: 650px) {
+  .nav-links { display: none; }
+  .hamburger { display: block; }
+  .build-layout { flex-direction: column; }
+  .chapter-nav { min-width: unset; width: 100%; display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 16px; border-bottom: 1px solid #332F2A; }
+  .ch-btn { width: auto; border: 1px solid #332F2A; padding: 6px 10px; border-bottom: 1px solid #332F2A; }
+  .ch-btn.active-btn { border-color: #E8A838; }
+  .files-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <button class="nav-logo" onclick="showPage('home')">THE SYNTH PROJECT</button>
+    <div class="nav-links">
+      <button class="nav-btn" id="nav-project" onclick="showPage('project')">The Project</button>
+      <button class="nav-btn" id="nav-build" onclick="showPage('build')">The Build</button>
+      <button class="nav-btn" id="nav-resources" onclick="showPage('resources')">Tools &amp; Resources</button>
+      <button class="nav-btn" id="nav-next" onclick="showPage('next')">What's Next</button>
+    </div>
+    <button class="hamburger" onclick="toggleMenu()">&#9776;</button>
+  </div>
+  <div class="mobile-menu" id="mobile-menu">
+    <button class="mobile-btn" onclick="showPage('project');toggleMenu()">The Project</button>
+    <button class="mobile-btn" onclick="showPage('build');toggleMenu()">The Build</button>
+    <button class="mobile-btn" onclick="showPage('resources');toggleMenu()">Tools &amp; Resources</button>
+    <button class="mobile-btn" onclick="showPage('next');toggleMenu()">What's Next</button>
+  </div>
+</nav>
+
+<main>
+
+<!-- HOME -->
+<div class="page active" id="page-home">
+  <div class="hero">
+    <div class="hero-inner">
+      <p class="section-label">A hobbyist's build log</p>
+      <h1>I built a synthesizer.<br><span class="accent">Three chips, eight voices, and a lot of dead ends.</span></h1>
+      <p>A polyphonic hardware synthesizer — designed, wired, and coded from scratch. Custom PCB, a full effects chain, Bluetooth MIDI, a web control interface, and a password-protected volume limiter built for grandchildren whose parents turned out to be the main users.</p>
+    </div>
+    <canvas id="osc"></canvas>
+  </div>
+  <div class="container">
+    <div class="spec-grid">
+      <div class="spec-cell"><div class="spec-label">Synthesis engine</div><div class="spec-value">STM32F411 + PCM5102A</div></div>
+      <div class="spec-cell"><div class="spec-label">Control &amp; MIDI</div><div class="spec-value">2&times; ESP32</div></div>
+      <div class="spec-cell"><div class="spec-label">Voices</div><div class="spec-value">8 polyphonic, adaptive scaling</div></div>
+      <div class="spec-cell"><div class="spec-label">Oscillators per voice</div><div class="spec-value">2 main + sub + noise + 2 LFO</div></div>
+      <div class="spec-cell"><div class="spec-label">Effects</div><div class="spec-value">Chorus, delay, ring mod, portamento</div></div>
+      <div class="spec-cell"><div class="spec-label">Status</div><div class="spec-value">In progress</div></div>
+    </div>
+    <div class="intro-text">
+      <p>This isn't a tutorial. It's a build log — the real decisions, the dead ends, the bugs that took weeks to find, and how AI-assisted development changed the way I work through problems. The goal is to show that a project that looks impossibly complicated can be broken into pieces small enough to actually tackle.</p>
+      <p>The project is unfinished. The site reflects that.</p>
+    </div>
+    <div class="btn-row">
+      <button class="btn-primary" onclick="showPage('project')">See the project &rarr;</button>
+      <button class="btn-secondary" onclick="showPage('build')">Read the build log</button>
+      <a href="https://github.com/Yorev89/Poli-Synth" target="_blank" style="text-decoration:none;"><button class="btn-secondary">GitHub repo &rarr;</button></a>
+    </div>
+  </div>
+</div>
+
+<!-- PROJECT -->
+<div class="page" id="page-project">
+  <div class="container">
+    <p class="section-label">The Project</p>
+    <h2>What I built — and where it stands</h2>
+    <div class="photo-block"><p>&#128247;&nbsp; Photo placeholder — main synth hardware — August 2025</p></div>
+    <div style="max-width:640px;">
+      <p>The project started as an analog design using the AD9833 waveform generator, then pivoted to a fully digital architecture when the limitations of single-channel synthesis became clear. The current design runs on three microcontrollers: an STM32F411 as the synthesis engine driving a PCM5102A DAC over I2S, and two ESP32 modules handling control, connectivity, and Bluetooth MIDI.</p>
+      <div class="card">
+        <div class="card-label">Voice engine</div>
+        <div class="table-row"><span class="table-key">Polyphonic voices</span><span class="table-val">8, with adaptive voice scaling</span></div>
+        <div class="table-row"><span class="table-key">Main oscillators per voice</span><span class="table-val">2 (sine, sawtooth, square, triangle)</span></div>
+        <div class="table-row"><span class="table-key">Osc2</span><span class="table-val">Independent level &amp; detune (0–100 cents)</span></div>
+        <div class="table-row"><span class="table-key">Sub oscillator</span><span class="table-val">Sine or square, &minus;1 or &minus;2 octaves</span></div>
+        <div class="table-row"><span class="table-key">Noise oscillator</span><span class="table-val">White noise, adjustable level</span></div>
+        <div class="table-row"><span class="table-key">Ring modulator</span><span class="table-val">Continuously blendable, additive to full ring mod</span></div>
+        <div class="table-row"><span class="table-key">Portamento</span><span class="table-val">Legato glide, 0–500ms</span></div>
+        <div class="table-row"><span class="table-key">Pitch bend</span><span class="table-val">Adjustable range</span></div>
+        <div class="table-row"><span class="table-key">Volume envelope</span><span class="table-val">ADSR per voice (A/D/R 1–1000ms, S 0–100%)</span></div>
+        <div class="table-row"><span class="table-key">Filter</span><span class="table-val">Global low-pass, 20Hz–18kHz, with ADSR</span></div>
+        <div class="table-row"><span class="table-key">LFOs</span><span class="table-val">2 independent (0.1–20Hz), 5 waveforms each</span></div>
+        <div class="table-row"><span class="table-key">LFO targets</span><span class="table-val">Pitch, filter cutoff, amplitude, Osc2 detune</span></div>
+        <div class="table-row"><span class="table-key">Chorus</span><span class="table-val">Stereo, 4-tap</span></div>
+        <div class="table-row"><span class="table-key">Delay</span><span class="table-val">Stereo, 5 presets (slapback to rhythmic)</span></div>
+        <div class="table-row"><span class="table-key">Voice stealing</span><span class="table-val">Intelligent — kills quietest releasing voice</span></div>
+        <div class="table-row"><span class="table-key">Factory presets</span><span class="table-val">15 (Fat Bass, TB-303 Acid, Bell Chime, and more)</span></div>
+        <div class="table-row"><span class="table-key">User presets</span><span class="table-val">12 slots, stored in non-volatile memory</span></div>
+        <div class="table-row"><span class="table-key">Web interface</span><span class="table-val">4 tabs: Sound, Modulation, FX, Presets</span></div>
+        <div class="table-row"><span class="table-key">BLE MIDI</span><span class="table-val">Auto-discovery, preferred device priority</span></div>
+        <div class="table-row"><span class="table-key">Volume ceiling</span><span class="table-val">Web UI, password protected; respects MIDI CC7</span></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Build status</div>
+        <div class="table-row"><span class="table-key">Voice engine</span><span class="table-val green">Working</span></div>
+        <div class="table-row"><span class="table-key">MIDI DIN input (STM32)</span><span class="table-val amber">Wired — commented out in current firmware</span></div>
+        <div class="table-row"><span class="table-key">BLE MIDI (ESP32 #2 &rarr; STM32)</span><span class="table-val green">Working</span></div>
+        <div class="table-row"><span class="table-key">Web control interface</span><span class="table-val green">Working</span></div>
+        <div class="table-row"><span class="table-key">PCB</span><span class="table-val green">Done</span></div>
+        <div class="table-row"><span class="table-key">3D printed housing</span><span class="table-val green">Done</span></div>
+        <div class="table-row"><span class="table-key">MIDI file player</span><span class="table-val amber">Built, pending deployment</span></div>
+        <div class="table-row"><span class="table-key">Auto music generation</span><span class="table-val amber">In design</span></div>
+      </div>
+      <div class="files-grid">
+        <div class="files-cell"><div class="files-label">Schematics &amp; PCB</div><div class="files-val">EasyEDA — to be added</div></div>
+        <div class="files-cell"><div class="files-label">Source code</div><div class="files-val"><a href="https://github.com/Yorev89/Poli-Synth" target="_blank" style="color:#A87820;">github.com/Yorev89/Poli-Synth</a></div></div>
+        <div class="files-cell"><div class="files-label">3D housing files</div><div class="files-val">To be added</div></div>
+        <div class="files-cell"><div class="files-label">Firmware tools</div><div class="files-val">Arduino IDE</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BUILD -->
+<div class="page" id="page-build">
+  <div class="container">
+    <p class="section-label">The Build</p>
+    <h2>Chapter by chapter</h2>
+    <div class="build-layout">
+      <div class="chapter-nav" id="ch-nav"></div>
+      <div class="chapter-content" id="ch-content"></div>
+    </div>
+  </div>
+</div>
+
+<!-- RESOURCES -->
+<div class="page" id="page-resources">
+  <div class="container">
+    <p class="section-label">Tools &amp; Resources</p>
+    <h2 style="margin-bottom:14px;">What actually helped</h2>
+    <p style="max-width:560px;margin-bottom:48px;">Not a comprehensive list. These are the tools and references I personally used — with straightforward notes on where they help and where they don't.</p>
+    <div style="margin-bottom:44px;">
+      <div class="res-category">Design &amp; development tools</div>
+      <div class="res-item"><div class="res-name">EasyEDA</div><div class="res-note">Used for all schematics and PCB layout. Browser-based, no installation required, handles the full workflow from schematic to Gerber export. Accessible without a professional EDA background.</div></div>
+      <div class="res-item"><div class="res-name">Arduino IDE</div><div class="res-note">Used for all firmware across all three MCUs — ESP32 and STM32 targets with the appropriate board packages. One IDE for the whole project kept things consistent.</div></div>
+      <div class="res-item"><div class="res-name">Claude (Anthropic)</div><div class="res-note">Used for the majority of code generation, debugging, and working through architectural decisions. AI assistance was central to the project — a way to move through problems that would otherwise have taken much longer. The quality of what you get back depends heavily on how clearly you describe what you're trying to do and what's going wrong.</div></div>
+    </div>
+    <div style="margin-bottom:44px;">
+      <div class="res-category">Reference documentation</div>
+      <div class="res-item"><div class="res-name">STM32F411 Reference Manual</div><div class="res-note">Dense, but the authoritative source on the chip's peripherals. Search for the specific section you need rather than reading linearly.</div></div>
+      <div class="res-item"><div class="res-name">Espressif ESP32 Technical Reference</div><div class="res-note">Better organized than expected. The I2S, BLE, and memory management sections were all useful at different points in this project.</div></div>
+      <div class="res-item"><div class="res-name">PCM5102A Datasheet</div><div class="res-note">Essential for understanding I2S configuration and the DAC's filter modes. Read alongside an I2S tutorial if you're new to the protocol.</div></div>
+    </div>
+    <div style="margin-bottom:44px;">
+      <div class="res-category">Communities</div>
+      <div class="res-item"><div class="res-name">r/synthdiy</div><div class="res-note">Haven't used it personally during this project, but it's active and covers a wide range of skill levels. Worth knowing it exists.</div></div>
+      <div class="res-item"><div class="res-name">Elektronauts forum</div><div class="res-note">More advanced, synthesis-focused. Useful for deeper questions about voice architecture and sound design.</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- WHAT'S NEXT -->
+<div class="page" id="page-next">
+  <div class="container">
+    <p class="section-label">What's Next</p>
+    <h2>The current frontier</h2>
+    <div class="next-card">
+      <div class="next-label">In progress</div>
+      <h3>Automatic music generation</h3>
+      <p>The next phase is making the synth generate its own music — algorithmically, driven by external inputs such as sensors. The three-MCU architecture maps cleanly onto this without modification: the STM32 continues as the pure synthesis engine, the first ESP32 generates local MIDI sequences using a Markov chain melody generator, and the second ESP32 acts as a gateway to AI-generated MIDI from the cloud.</p>
+      <p>The three-MCU split, originally forced by a hardware constraint, turned out to be exactly the right architecture for what comes next.</p>
+    </div>
+    <div class="next-card-dim">
+      <div class="next-label-dim">Under consideration</div>
+      <h3>Instrument preset emulation</h3>
+      <p>A longer-term question: can the synth emulate real musical instruments convincingly? Realistic instrument emulation — through physical modeling or detailed wavetables — is computationally heavier than the current subtractive synthesis engine. The STM32F411 may not have enough headroom for this without an upgrade to a more powerful MCU. It's an open question worth exploring, not a committed roadmap item.</p>
+    </div>
+    <div style="max-width:640px;">
+      <p>This site updates as the project evolves. The build log is written as things happen — including the parts that don't work yet.</p>
+      <p>If you're working on something similar and want to compare notes, contact details will appear here when the site goes public.</p>
+    </div>
+  </div>
+</div>
+
+</main>
+
+<footer><p>THE SYNTH PROJECT &mdash; A work in progress</p></footer>
+
+<script>
+var chapters = [
+  {
+    id: "idea", number: "01", title: "The Idea", subtitle: "Where it started",
+    paragraphs: [
+      "I spent decades in the telecom industry — system engineering, network design, senior roles at large international telecommunications companies. Electronics was always part of the background. But building a synthesizer from scratch, writing firmware, designing PCBs — that was genuinely new territory.",
+      "The idea was simple enough: I wanted to build a polyphonic synthesizer. Not buy one, not kit one — design and build one. I knew enough to know it would be complicated. I started anyway.",
+      "This is the account of that process. The decisions, the dead ends, the bugs that took weeks to find, and how I got through them. If you're standing at the beginning of something that looks too complicated, that's exactly who this is written for.",
+      "I built the synth for my grandchildren. It's used mainly by their parents."
+    ],
+    placeholder: "Photo: early bench setup — components, breadboard, first wiring"
+  },
+  {
+    id: "analog", number: "02", title: "The Analog Start", subtitle: "AD9833 — and why I moved on",
+    paragraphs: [
+      "The original approach was analog synthesis using the AD9833 — a programmable waveform generator chip. It worked. I got sound out of it, understood the signal chain, and built a solid foundation in how synthesis actually functions.",
+      "But it was limited. The AD9833 is a single-channel DDS chip — one waveform at a time. Building the kind of polyphony I had in mind around it was going to be slow, complex, and ultimately constraining. After enough time with it, I made the decision to pivot to a fully digital architecture built around microcontrollers.",
+      "That decision changed everything that followed."
+    ],
+    placeholder: "Photo or diagram: AD9833 breadboard prototype"
+  },
+  {
+    id: "architecture", number: "03", title: "The Architecture", subtitle: "Three MCUs — why, and what each does",
+    paragraphs: [
+      "The synth is built around three microcontrollers, each with a distinct role.",
+      "The STM32F411 is the synthesis engine. It generates audio samples in real time, manages all active voices, and outputs digital audio over I2S to the PCM5102A DAC. It also handles the hardware 5-pin DIN MIDI input directly — wired to the STM32 and active in the firmware, though most playing now happens over Bluetooth.",
+      "The first ESP32 is the control layer: the web-based interface, WiFi access point, and communication with the STM32.",
+      "The second ESP32 is the Bluetooth MIDI gateway. Finding MIDI keyboards with a 5-pin DIN connector turned out to be harder than expected, so I added BLE MIDI support to the ESP32 code — and it took a while to realize that BLE and WiFi cannot reliably coexist on the same ESP32. BLE causes severe heap fragmentation that destabilizes the web server; the two fight each other in ways that are not immediately obvious. A dedicated second ESP32 solved this cleanly. It receives BLE MIDI from a keyboard and passes tone commands — C7, E4, and so on — directly to the STM32, not through the first ESP32, because the ESP32 doesn't have enough hardware UARTs to support that routing.",
+      "Inelegant on paper. Completely reliable in practice. And as it turned out, the three-MCU split maps cleanly onto the next phase of the project."
+    ],
+    placeholder: "Diagram: three-MCU architecture — STM32 + ESP32 #1 + ESP32 #2 with signal paths"
+  },
+  {
+    id: "buildprocess", number: "04", title: "The Build Process", subtitle: "One step at a time",
+    paragraphs: [
+      "The most important decision I made wasn't technical — it was how to approach the project. A polyphonic synthesizer with multiple microcontrollers, custom PCB, and a full effects chain looks overwhelming as a whole. The only way through it was to break it into the smallest possible pieces and get each one working before moving to the next.",
+      "The sequence mattered. Start with something audible as fast as possible — a single sine wave out of the STM32 through the DAC. Once that worked, add a second voice. Then a third, up to eight. Only when polyphony was stable did I start adding oscillator waveforms: sine first, then triangle, sawtooth, square. Sub oscillator next. Noise. LFOs.",
+      "Effects followed the same logic: chorus first, then delay, then the ring modulator. Each added independently, tested, stabilized before the next.",
+      "The web interface and MIDI came in parallel tracks — but even there, the 5-pin DIN MIDI came first, BLE MIDI only after the core system was solid.",
+      "This approach has a name in software: incremental development. It applies equally well to hardware. Every step gave me something that worked, which meant every new problem was isolatable — I knew roughly where to look because I knew what had just changed.",
+      "AI assistance fit naturally into this workflow. Each step was small enough to describe precisely, which meant the questions I asked were specific enough to get useful answers.",
+      "There is one important caveat worth naming for anyone following a similar approach: because AI was the primary author of the firmware, it occasionally changed parts of the code I wasn't expecting it to touch. A fix in one area would quietly affect another, introducing new artifacts or breaking features that had been working. These were among the hardest problems to debug — the symptom appeared in one place while the cause was somewhere else entirely, in code I hadn't asked to change. AI and I both spent considerable time on some of these. If you're using AI to write firmware, review every change carefully — not just the part you asked about."
+    ],
+    placeholder: "Photo: breadboard evolution — early prototype vs later stage"
+  },
+  {
+    id: "audio", number: "05", title: "Audio & Synthesis", subtitle: "Voices, oscillators, effects, and the bugs",
+    paragraphs: [
+      "The synth supports eight polyphonic voices with adaptive voice scaling — the more notes playing simultaneously, the quieter each individual voice becomes, automatically and transparently, so the combined output stays at a consistent level without clipping. It’s the same principle a mixing engineer applies when balancing a mix, done in real time in firmware.",
+      "Each voice has two main oscillators switchable between sine, sawtooth, square, and triangle waveforms, with Osc2 offering independent level and detune control up to 100 cents. A sub oscillator adds sine or square wave one or two octaves below, and a white noise generator rounds out the voice. Each voice has its own volume ADSR envelope. The filter is a global low-pass covering 20Hz to 18kHz, with its own ADSR envelope and LFO modulation. Two independent LFOs run at 0.1 to 20Hz each, with five waveform options and four modulation targets: pitch, filter cutoff, amplitude, and Osc2 detune. Portamento adds legato glide between notes with adjustable time up to 500ms. The ring modulator is continuously blendable from additive mix to full ring modulation. Effects include stereo 4-tap chorus and stereo delay with five presets. Fifteen factory presets and twelve user-saveable slots stored in non-volatile memory. Intelligent voice stealing kills the quietest releasing voice when all eight are active.",
+      "And one feature that appeared in no synthesis textbook: a password-protected volume ceiling, accessible through the web interface. It applies to MIDI keyboard volume control (CC7) as well, so it can’t be bypassed from the keyboard. The synth was built for my grandchildren. Their parents needed it.",
+      "Getting audio out cleanly was harder than the feature list suggests. The first bug was a click — a sharp transient on every note start and end. Three weeks to find. The fix: delay voice deactivation until the amplitude envelope fully reaches zero. Don't cut a voice mid-cycle.",
+      "The second bug was the TADA artifact — a brief chord-like sound appearing on note-on when multiple oscillators had been running. The cause was related to the same principle: voice state wasn't fully reset before reuse. The fix was ensuring both the amplitude and filter envelopes reach zero before a voice is marked available for stealing.",
+      "The third bug was the hardest to find: a subtle degradation in sound quality that appeared only after many oscillators had been running for an extended period. The cause was a type mismatch deep in the synthesis code — an integer being multiplied with a floating-point value, causing the result to be silently truncated back to an integer on every sample. The error accumulated over time into something audible. Changing one variable declaration from int to float fixed it. One word in the code. Weeks on the oscilloscope to find."
+    ],
+    placeholder: "Diagram: voice architecture — dual oscillators, waveforms, sub, noise, ADSR, shared filter, effects chain"
+  },
+  {
+    id: "midi", number: "06", title: "MIDI & Control", subtitle: "DIN, BLE, and the web interface",
+    paragraphs: [
+      "MIDI is the standard protocol for communicating musical events — note on, note off, pitch, velocity. The STM32 handles the hardware MIDI DIN input via a 5-pin DIN connector wired directly to it. It's wired to the STM32 and present in the hardware, though currently commented out in the firmware — PA10 was repurposed for the web serial connection to ESP32 #1, with MIDI commands now routed via PA3. In practice most playing happens wirelessly over BLE.",
+      "Bluetooth MIDI came later, when finding keyboards with a 5-pin DIN connector proved more difficult than expected. The dedicated second ESP32 handles BLE MIDI reception and passes tone commands directly to the STM32. The system is transparent to a player — connect a wireless keyboard, play.",
+      "The web control interface runs on the first ESP32 as a WiFi access point at 192.168.4.1. Connect any device to the synth's network, open a browser, and you have full control over parameters, presets, and settings — including the password-protected volume limit. No internet connection required.",
+      "All firmware was written with Claude (Anthropic's AI). I'd describe what I needed, explain what was going wrong, and iterate. AI-assisted development was central to the project — a way to move through problems that would otherwise have taken much longer. The oscilloscope was equally essential. Some bugs are invisible in code and only reveal themselves as waveforms."
+    ],
+    placeholder: "Photo: 5-pin DIN connector on hardware + web UI on a device screen"
+  },
+  {
+    id: "hardware", number: "07", title: "Hardware & Housing", subtitle: "PCB, schematics, and the physical build",
+    paragraphs: [
+      "Schematics and PCB layout were done in EasyEDA — a browser-based tool that handles the full workflow from schematic capture to PCB layout to Gerber file export for fabrication. Accessible without professional EDA experience, which mattered at the start.",
+      "The PCB went through several iterations. Early versions were breadboard prototypes — enough to validate the circuit before committing to a board. The final PCB brought all three MCUs, the DAC, power regulation, and connectors onto a single board.",
+      "The housing is 3D printed, designed around the PCB to expose the connectors and controls cleanly. Getting from a tangle of wires on a bench to a finished physical object was one of the more satisfying moments of the project.",
+      "Schematics, PCB files, and housing STL files will be published here when the site goes public."
+    ],
+    placeholder: "Photo: PCB front and back + finished housing"
+  }
+];
+
+var activeChapter = "idea";
+
+function renderBuild() {
+  var nav = document.getElementById("ch-nav");
+  var content = document.getElementById("ch-content");
+  var ch = chapters.find(function(c) { return c.id === activeChapter; });
+
+  nav.innerHTML = chapters.map(function(c) {
+    var isActive = c.id === activeChapter;
+    return '<button class="ch-btn' + (isActive ? ' active-btn' : '') + '" onclick="selectChapter(\'' + c.id + '\')">' +
+      '<span class="ch-num' + (isActive ? ' active' : '') + '">' + c.number + '</span>' +
+      '<span class="ch-title' + (isActive ? ' active' : '') + '">' + c.title + '</span>' +
+      '</button>';
+  }).join('');
+
+  var paras = ch.paragraphs.map(function(p) { return '<p>' + p + '</p>'; }).join('');
+
+  content.innerHTML =
+    '<div class="ch-header">' +
+      '<div class="ch-subtitle">' + ch.subtitle + '</div>' +
+      '<h3>' + ch.title + '</h3>' +
+    '</div>' +
+    paras +
+    '<div class="photo-inline"><p>&#128247;&nbsp; ' + ch.placeholder + '</p></div>';
+}
+
+function selectChapter(id) {
+  activeChapter = id;
+  renderBuild();
+}
+
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+  document.getElementById('page-' + id).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(function(b) { b.classList.remove('active'); });
+  var nb = document.getElementById('nav-' + id);
+  if (nb) nb.classList.add('active');
+  window.scrollTo(0, 0);
+  if (id === 'build') renderBuild();
+}
+
+function toggleMenu() {
+  var m = document.getElementById('mobile-menu');
+  var h = document.querySelector('.hamburger');
+  var open = m.classList.toggle('open');
+  h.innerHTML = open ? '&#10005;' : '&#9776;';
+}
+
+// Oscilloscope
+(function() {
+  var canvas = document.getElementById('osc');
+  var ctx = canvas.getContext('2d');
+  var t = 0;
+  function resize() {
+    canvas.width = canvas.offsetWidth;
+    canvas.height = 130;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+  function draw() {
+    var W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(46,42,38,0.5)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(232,168,56,0.07)';
+    ctx.lineWidth = 1;
+    for (var x = 0; x < W; x += W/8) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+    for (var y = 0; y < H; y += H/4) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+    ctx.beginPath();
+    ctx.strokeStyle = '#E8A838';
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = '#E8A838';
+    ctx.shadowBlur = 5;
+    for (var i = 0; i < W; i++) {
+      var tt = (i/W)*Math.PI*4+t;
+      var yy = H/2 + Math.sin(tt)*H*0.22 + Math.sin(tt*2.3+0.8)*H*0.07 + Math.sin(tt*0.5-0.3)*H*0.05;
+      i===0 ? ctx.moveTo(i,yy) : ctx.lineTo(i,yy);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    t += 0.012;
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+renderBuild();
+</script>
+</body>
+</html>
