@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://yorev89.github.io/Poly-Synth/sitemap.xml
