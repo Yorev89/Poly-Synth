@@ -1,4 +1,5 @@
 # Poly-Synth — DIY Polyphonic Synthesizer
+**Live site:** [yorev89.github.io/Poly-Synth](https://yorev89.github.io/Poly-Synth)
 
 A homebrew polyphonic synthesizer built from scratch, based on a 
 three-MCU architecture. This repository contains all firmware files 
