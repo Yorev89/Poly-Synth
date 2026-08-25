@@ -59,5 +59,4 @@ and hardware resources.
 - MIDI keyboard volume (CC7) respects the web-set ceiling
 
 ## Status
-Work in progress. Hardware complete. Firmware verification 
-scheduled for August 2026.
+✅ Hardware complete. Firmware verified on hardware — August 2026. First stable release: v1.0
