@@ -168,7 +168,7 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #60
   <div class="container">
     <p class="section-label">The Project</p>
     <h2>What I built — and where it stands</h2>
-    <div class="photo-block"><p>&#128247;&nbsp; Photo placeholder — main synth hardware — August 2025</p></div>
+    <div class="photo-block"><img src="images/Synth_and_Tablet.jpg" alt="Poly-Synth with tablet showing web UI" style="width:100%;max-width:800px;border-radius:6px;display:block;margin:0 auto;"><p style="margin-top:12px;">&#128247;&nbsp; The complete system — synthesizer unit with web control interface and BLE MIDI keyboard</p></div>
     <div style="max-width:640px;">
       <p>The project started as an analog design using the AD9833 waveform generator, then pivoted to a fully digital architecture when the limitations of single-channel synthesis became clear. The current design runs on three microcontrollers: an STM32F411 as the synthesis engine driving a PCM5102A DAC over I2S, and two ESP32 modules handling control, connectivity, and Bluetooth MIDI.</p>
       <div class="card">
@@ -345,7 +345,7 @@ var chapters = [
       "The web control interface runs on the first ESP32 as a WiFi access point at 192.168.4.1. Connect any device to the synth's network, open a browser, and you have full control over parameters, presets, and settings — including the password-protected volume limit. No internet connection required.",
       "All firmware was written with Claude (Anthropic's AI). I'd describe what I needed, explain what was going wrong, and iterate. AI-assisted development was central to the project — a way to move through problems that would otherwise have taken much longer. The oscilloscope was equally essential. Some bugs are invisible in code and only reveal themselves as waveforms."
     ],
-    placeholder: "Photo: 5-pin DIN connector on hardware + web UI on a device screen"
+    placeholder: "Photo: 5-pin DIN connector on hardware + web UI on a device screen", image: "images/Synth.jpg", imageAlt: "Full playing setup — keyboard, synth unit and web UI"
   },
   {
     id: "hardware", number: "07", title: "Hardware & Housing", subtitle: "PCB, schematics, and the physical build",
@@ -355,7 +355,7 @@ var chapters = [
       "The housing is 3D printed, designed around the PCB to expose the connectors and controls cleanly. Getting from a tangle of wires on a bench to a finished physical object was one of the more satisfying moments of the project.",
       "Schematics, PCB files, and housing STL files will be published here when the site goes public."
     ],
-    placeholder: "Photo: PCB front and back + finished housing"
+    placeholder: "Photo: PCB front and back + finished housing", image: "images/Synth_Board.jpg", imageAlt: "Custom PCB with STM32, dual ESP32 and audio circuitry"
   }
 ];
 
@@ -382,7 +382,7 @@ function renderBuild() {
       '<h3>' + ch.title + '</h3>' +
     '</div>' +
     paras +
-    '<div class="photo-inline"><p>&#128247;&nbsp; ' + ch.placeholder + '</p></div>';
+    '<div class="photo-inline">' + (ch.image ? '<img src="' + ch.image + '" alt="' + (ch.imageAlt||"") + '" style="width:100%;border-radius:6px;margin-bottom:10px;">' : '') + '<p>&#128247;&nbsp; ' + ch.placeholder + '</p></div>';
 }
 
 function selectChapter(id) {
