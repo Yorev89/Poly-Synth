@@ -335,7 +335,7 @@ var chapters = [
       "The second bug was the TADA artifact — a brief chord-like sound appearing on note-on when multiple oscillators had been running. The cause was related to the same principle: voice state wasn't fully reset before reuse. The fix was ensuring both the amplitude and filter envelopes reach zero before a voice is marked available for stealing.",
       "The third bug was the hardest to find: a subtle degradation in sound quality that appeared only after many oscillators had been running for an extended period. The cause was a type mismatch deep in the synthesis code — an integer being multiplied with a floating-point value, causing the result to be silently truncated back to an integer on every sample. The error accumulated over time into something audible. Changing one variable declaration from int to float fixed it. One word in the code. Weeks on the oscilloscope to find."
     ],
-    placeholder: "Diagram: voice architecture — dual oscillators, waveforms, sub, noise, ADSR, shared filter, effects chain"
+    placeholder: "Diagram: voice architecture — dual oscillators, waveforms, sub, noise, ADSR, shared filter, effects chain", image: "images/signal-chain.svg", imageAlt: "Poly-Synth signal chain diagram"
   },
   {
     id: "midi", number: "06", title: "MIDI & Control", subtitle: "DIN, BLE, and the web interface",
