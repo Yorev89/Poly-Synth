@@ -299,7 +299,7 @@ var chapters = [
       "But it was limited. The AD9833 is a single-channel DDS chip — one waveform at a time. Building the kind of polyphony I had in mind around it was going to be slow, complex, and ultimately constraining. After enough time with it, I made the decision to pivot to a fully digital architecture built around microcontrollers.",
       "That decision changed everything that followed."
     ],
-    placeholder: "Photo or diagram: AD9833 breadboard prototype", image: "images/Analog Synth.jpg", imageAlt: "AD9833 analog synthesizer prototype"
+    placeholder: "AD9833 synth prototype — the analog starting point", image: "images/Analog Synth.jpg", imageAlt: "AD9833 analog synthesizer prototype"
   },
   {
     id: "architecture", number: "03", title: "The Architecture", subtitle: "Three MCUs — why, and what each does",
@@ -310,7 +310,7 @@ var chapters = [
       "The second ESP32 is the Bluetooth MIDI gateway. Finding MIDI keyboards with a 5-pin DIN connector turned out to be harder than expected, so I added BLE MIDI support to the ESP32 code — and it took a while to realize that BLE and WiFi cannot reliably coexist on the same ESP32. BLE causes severe heap fragmentation that destabilizes the web server; the two fight each other in ways that are not immediately obvious. A dedicated second ESP32 solved this cleanly. It receives BLE MIDI from a keyboard and passes tone commands — C7, E4, and so on — directly to the STM32, not through the first ESP32, because the ESP32 doesn't have enough hardware UARTs to support that routing.",
       "Inelegant on paper. Completely reliable in practice. And as it turned out, the three-MCU split maps cleanly onto the next phase of the project."
     ],
-    placeholder: "Diagram: three-MCU architecture — STM32 + ESP32 #1 + ESP32 #2 with signal paths", image: "https://raw.githubusercontent.com/Yorev89/Poly-Synth/main/Hardware/Schematics/Poly-Synth Block Diagram.png", imageAlt: "Poly-Synth block diagram showing three-MCU architecture"
+    placeholder: "Poly-Synth system block diagram", image: "https://raw.githubusercontent.com/Yorev89/Poly-Synth/main/Hardware/Schematics/Poly-Synth Block Diagram.png", imageAlt: "Poly-Synth block diagram showing three-MCU architecture"
   },
   {
     id: "buildprocess", number: "04", title: "The Build Process", subtitle: "One step at a time",
@@ -335,7 +335,7 @@ var chapters = [
       "The second bug was the TADA artifact — a brief chord-like sound appearing on note-on when multiple oscillators had been running. The cause was related to the same principle: voice state wasn't fully reset before reuse. The fix was ensuring both the amplitude and filter envelopes reach zero before a voice is marked available for stealing.",
       "The third bug was the hardest to find: a subtle degradation in sound quality that appeared only after many oscillators had been running for an extended period. The cause was a type mismatch deep in the synthesis code — an integer being multiplied with a floating-point value, causing the result to be silently truncated back to an integer on every sample. The error accumulated over time into something audible. Changing one variable declaration from int to float fixed it. One word in the code. Weeks on the oscilloscope to find."
     ],
-    placeholder: "Diagram: voice architecture — dual oscillators, waveforms, sub, noise, ADSR, shared filter, effects chain", image: "images/signal-chain.svg", imageAlt: "Poly-Synth signal chain diagram"
+    placeholder: "Voice signal chain — oscillators, filter, envelopes and effects", image: "images/signal-chain.svg", imageAlt: "Poly-Synth signal chain diagram"
   },
   {
     id: "midi", number: "06", title: "MIDI & Control", subtitle: "DIN, BLE, and the web interface",
@@ -355,7 +355,7 @@ var chapters = [
       "The housing is 3D printed, designed around the PCB to expose the connectors and controls cleanly. Getting from a tangle of wires on a bench to a finished physical object was one of the more satisfying moments of the project.",
       "Schematics, PCB layout, Gerber files, and housing STL files are all available in the GitHub repository."
     ],
-    placeholder: "Photo: PCB front and back + finished housing", image: "images/Synth Board.jpg", imageAlt: "Custom PCB with STM32, dual ESP32 and audio circuitry"
+    placeholder: "Custom PCB — STM32, dual ESP32, DAC and audio circuitry", image: "images/Synth Board.jpg", imageAlt: "Custom PCB with STM32, dual ESP32 and audio circuitry"
   }
 ];
 
