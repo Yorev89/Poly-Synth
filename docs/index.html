@@ -206,9 +206,9 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #60
         <div class="table-row"><span class="table-key">Auto music generation</span><span class="table-val amber">In design</span></div>
       </div>
       <div class="files-grid">
-        <div class="files-cell"><div class="files-label">Schematics &amp; PCB</div><div class="files-val"><a href="https://github.com/Yorev89/Poly-Synth/tree/main/Hardware/Schematics" target="_blank" style="color:#A87820;">Schematics &amp; Block Diagram</a> · <a href="https://github.com/Yorev89/Poly-Synth/tree/main/Hardware/PCB" target="_blank" style="color:#A87820;">PCB &amp; Gerber Files</a></div></div>
+        <div class="files-cell"><div class="files-label">Schematics &amp; PCB</div><div class="files-val">EasyEDA — to be added</div></div>
         <div class="files-cell"><div class="files-label">Source code</div><div class="files-val"><a href="https://github.com/Yorev89/Poly-Synth" target="_blank" style="color:#A87820;">github.com/Yorev89/Poli-Synth</a></div></div>
-        <div class="files-cell"><div class="files-label">3D housing files</div><div class="files-val"><a href="https://github.com/Yorev89/Poly-Synth/tree/main/Hardware/synth-case-files" target="_blank" style="color:#A87820;">STL files (GitHub)</a></div></div>
+        <div class="files-cell"><div class="files-label">3D housing files</div><div class="files-val">To be added</div></div>
         <div class="files-cell"><div class="files-label">Firmware tools</div><div class="files-val">Arduino IDE</div></div>
       </div>
     </div>
@@ -310,7 +310,7 @@ var chapters = [
       "The second ESP32 is the Bluetooth MIDI gateway. Finding MIDI keyboards with a 5-pin DIN connector turned out to be harder than expected, so I added BLE MIDI support to the ESP32 code — and it took a while to realize that BLE and WiFi cannot reliably coexist on the same ESP32. BLE causes severe heap fragmentation that destabilizes the web server; the two fight each other in ways that are not immediately obvious. A dedicated second ESP32 solved this cleanly. It receives BLE MIDI from a keyboard and passes tone commands — C7, E4, and so on — directly to the STM32, not through the first ESP32, because the ESP32 doesn't have enough hardware UARTs to support that routing.",
       "Inelegant on paper. Completely reliable in practice. And as it turned out, the three-MCU split maps cleanly onto the next phase of the project."
     ],
-    placeholder: "Diagram: three-MCU architecture — STM32 + ESP32 #1 + ESP32 #2 with signal paths", image: "images/Poly-Synth_Block_Diagram.png", imageAlt: "Poly-Synth block diagram showing three-MCU architecture"
+    placeholder: "Diagram: three-MCU architecture — STM32 + ESP32 #1 + ESP32 #2 with signal paths"
   },
   {
     id: "buildprocess", number: "04", title: "The Build Process", subtitle: "One step at a time",
@@ -353,7 +353,7 @@ var chapters = [
       "Schematics and PCB layout were done in EasyEDA — a browser-based tool that handles the full workflow from schematic capture to PCB layout to Gerber file export for fabrication. Accessible without professional EDA experience, which mattered at the start.",
       "The PCB went through several iterations. Early versions were breadboard prototypes — enough to validate the circuit before committing to a board. The final PCB brought all three MCUs, the DAC, power regulation, and connectors onto a single board.",
       "The housing is 3D printed, designed around the PCB to expose the connectors and controls cleanly. Getting from a tangle of wires on a bench to a finished physical object was one of the more satisfying moments of the project.",
-      "Schematics, PCB layout, Gerber files, and housing STL files are all available in the GitHub repository."
+      "Schematics, PCB files, and housing STL files will be published here when the site goes public."
     ],
     placeholder: "Photo: PCB front and back + finished housing", image: "images/Synth_Board.jpg", imageAlt: "Custom PCB with STM32, dual ESP32 and audio circuitry"
   }
@@ -449,4 +449,3 @@ renderBuild();
 </script>
 </body>
 </html>
-
