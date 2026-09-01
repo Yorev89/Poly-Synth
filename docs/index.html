@@ -310,7 +310,7 @@ var chapters = [
       "The second ESP32 is the Bluetooth MIDI gateway. Finding MIDI keyboards with a 5-pin DIN connector turned out to be harder than expected, so I added BLE MIDI support to the ESP32 code — and it took a while to realize that BLE and WiFi cannot reliably coexist on the same ESP32. BLE causes severe heap fragmentation that destabilizes the web server; the two fight each other in ways that are not immediately obvious. A dedicated second ESP32 solved this cleanly. It receives BLE MIDI from a keyboard and passes tone commands — C7, E4, and so on — directly to the STM32, not through the first ESP32, because the ESP32 doesn't have enough hardware UARTs to support that routing.",
       "Inelegant on paper. Completely reliable in practice. And as it turned out, the three-MCU split maps cleanly onto the next phase of the project."
     ],
-    placeholder: "Diagram: three-MCU architecture — STM32 + ESP32 #1 + ESP32 #2 with signal paths", image: "https://raw.githubusercontent.com/Yorev89/Poly-Synth/main/Hardware/Schematics/Poly-Synth_Block_Diagram.png", imageAlt: "Poly-Synth block diagram showing three-MCU architecture"
+    placeholder: "Diagram: three-MCU architecture — STM32 + ESP32 #1 + ESP32 #2 with signal paths", image: "https://raw.githubusercontent.com/Yorev89/Poly-Synth/main/Hardware/Schematics/Poly-Synth Block Diagram.png", imageAlt: "Poly-Synth block diagram showing three-MCU architecture"
   },
   {
     id: "buildprocess", number: "04", title: "The Build Process", subtitle: "One step at a time",
