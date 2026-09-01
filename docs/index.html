@@ -299,7 +299,7 @@ var chapters = [
       "But it was limited. The AD9833 is a single-channel DDS chip — one waveform at a time. Building the kind of polyphony I had in mind around it was going to be slow, complex, and ultimately constraining. After enough time with it, I made the decision to pivot to a fully digital architecture built around microcontrollers.",
       "That decision changed everything that followed."
     ],
-    placeholder: "Photo or diagram: AD9833 breadboard prototype"
+    placeholder: "Photo or diagram: AD9833 breadboard prototype", image: "images/Analog Synth.jpg", imageAlt: "AD9833 analog synthesizer prototype"
   },
   {
     id: "architecture", number: "03", title: "The Architecture", subtitle: "Three MCUs — why, and what each does",
@@ -382,7 +382,7 @@ function renderBuild() {
       '<h3>' + ch.title + '</h3>' +
     '</div>' +
     paras +
-    '<div class="photo-inline">' + (ch.image ? '<img src="' + ch.image + '" alt="' + (ch.imageAlt||"") + '" style="width:100%;border-radius:6px;margin-bottom:10px;">' : '') + '<p>&#128247;&nbsp; ' + ch.placeholder + '</p></div>';
+    '<div class="photo-inline">' + (ch.image ? '<img src="' + ch.image + '" alt="' + (ch.imageAlt||"") + '" style="width:100%;border-radius:6px;margin-bottom:10px;background:#ffffff;">' : '') + '<p>&#128247;&nbsp; ' + ch.placeholder + '</p></div>';
 }
 
 function selectChapter(id) {
