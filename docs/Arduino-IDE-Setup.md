@@ -17,7 +17,7 @@ Install these via Arduino IDE → Board Manager:
 |---------|-------|
 | Board | STM32 MCU based boards → Generic STM32F4 Series |
 | Board part number | Generic F411CEUx |
-| Upload method | STM32CubeProgrammer (DFU) or (SWD) |
+| Upload method | STM32CubeProgrammer (DFU) |
 | U(S)ART support | Enabled (generic Serial) |
 | USB support | CDC (generic Serial supersede U(S)ART) |
 | Optimize | Fastest (-O3) |
