@@ -11,6 +11,8 @@
 <meta property="og:description" content="8-voice polyphonic synthesizer built from scratch. Full build log, firmware, and hardware resources.">
 <meta property="og:url" content="https://yorev89.github.io/Poly-Synth">
 <meta property="og:type" content="website">
+<meta property="og:image" content="https://yorev89.github.io/Poly-Synth/images/Synth.jpg">
+<meta property="og:image:alt" content="The Poly-Synth: synthesizer unit with web control interface and BLE MIDI keyboard">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Source+Serif+4:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -148,8 +150,8 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A
       <div class="spec-cell"><div class="spec-label">Control &amp; MIDI</div><div class="spec-value">2&times; ESP32</div></div>
       <div class="spec-cell"><div class="spec-label">Voices</div><div class="spec-value">8 polyphonic, adaptive scaling</div></div>
       <div class="spec-cell"><div class="spec-label">Oscillators per voice</div><div class="spec-value">2 main + sub + noise + 2 LFO</div></div>
-      <div class="spec-cell"><div class="spec-label">Effects</div><div class="spec-value">Chorus, delay, ring mod, portamento</div></div>
-      <div class="spec-cell"><div class="spec-label">Status</div><div class="spec-value">Complete</div></div>
+      <div class="spec-cell"><div class="spec-label">Effects</div><div class="spec-value">Chorus, delay, ring mod</div></div>
+      <div class="spec-cell"><div class="spec-label">Status</div><div class="spec-value">Playable, in active development</div></div>
     </div>
     <div class="intro-text">
       <p>This isn't a tutorial. It's a build log — the real decisions, the dead ends, the bugs that took weeks to find, and how AI-assisted development changed the way I work through problems. The goal is to show that a project that looks impossibly complicated can be broken into pieces small enough to actually tackle.</p>
@@ -181,14 +183,14 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A
         <div class="table-row"><span class="table-key">Ring modulator</span><span class="table-val">Continuously blendable, additive to full ring mod</span></div>
         <div class="table-row"><span class="table-key">Portamento</span><span class="table-val">Legato glide, 0–500ms</span></div>
         <div class="table-row"><span class="table-key">Pitch bend</span><span class="table-val">Adjustable range</span></div>
-        <div class="table-row"><span class="table-key">Volume envelope</span><span class="table-val">ADSR per voice (A/D/R 1–1000ms, S 0–100%)</span></div>
-        <div class="table-row"><span class="table-key">Filter</span><span class="table-val">Global low-pass, 20Hz–18kHz, with ADSR</span></div>
+        <div class="table-row"><span class="table-key">Volume envelope</span><span class="table-val">ADSR per voice (A/D 1–1000ms, S 0–100%, R 1–3000ms)</span></div>
+        <div class="table-row"><span class="table-key">Filter</span><span class="table-val">Global one-pole low-pass, 200Hz–10kHz, with ADSR</span></div>
         <div class="table-row"><span class="table-key">LFOs</span><span class="table-val">2 independent (0.1–20Hz), 5 waveforms each</span></div>
         <div class="table-row"><span class="table-key">LFO targets</span><span class="table-val">Pitch, filter cutoff, amplitude, Osc2 detune</span></div>
-        <div class="table-row"><span class="table-key">Chorus</span><span class="table-val">Stereo, 4-tap</span></div>
-        <div class="table-row"><span class="table-key">Delay</span><span class="table-val">Stereo, 5 presets (slapback to rhythmic)</span></div>
+        <div class="table-row"><span class="table-key">Chorus</span><span class="table-val">4-tap, mono (stereo planned)</span></div>
+        <div class="table-row"><span class="table-key">Delay</span><span class="table-val">Up to 200ms, 4 presets (slapback to rhythmic), mono</span></div>
         <div class="table-row"><span class="table-key">Voice stealing</span><span class="table-val">Intelligent — kills quietest releasing voice</span></div>
-        <div class="table-row"><span class="table-key">Factory presets</span><span class="table-val">15 (Fat Bass, TB-303 Acid, Bell Chime, and more)</span></div>
+        <div class="table-row"><span class="table-key">Factory presets</span><span class="table-val">15 (Fat Bass, TB-303 Acid, Bell Chime, 808 Bass, and more)</span></div>
         <div class="table-row"><span class="table-key">User presets</span><span class="table-val">12 slots, stored in non-volatile memory</span></div>
         <div class="table-row"><span class="table-key">Web interface</span><span class="table-val">4 tabs: Sound, Modulation, FX, Presets</span></div>
         <div class="table-row"><span class="table-key">BLE MIDI</span><span class="table-val">Auto-discovery, preferred device priority</span></div>
@@ -197,7 +199,7 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A
       <div class="card">
         <div class="card-label">Build status</div>
         <div class="table-row"><span class="table-key">Voice engine</span><span class="table-val green">Working</span></div>
-        <div class="table-row"><span class="table-key">MIDI DIN input (STM32)</span><span class="table-val amber">Wired — commented out in current firmware</span></div>
+        <div class="table-row"><span class="table-key">MIDI DIN input (STM32)</span><span class="table-val amber">Wired — disabled; its UART pin now serves the web ESP32</span></div>
         <div class="table-row"><span class="table-key">BLE MIDI (ESP32 #2 &rarr; STM32)</span><span class="table-val green">Working</span></div>
         <div class="table-row"><span class="table-key">Web control interface</span><span class="table-val green">Working</span></div>
         <div class="table-row"><span class="table-key">PCB</span><span class="table-val green">Done</span></div>
@@ -207,7 +209,7 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A
       </div>
       <div class="files-grid">
         <div class="files-cell"><div class="files-label">Schematics &amp; PCB</div><div class="files-val"><a href="https://github.com/Yorev89/Poly-Synth/tree/main/Hardware/Schematics" target="_blank" style="color:#A87820;">Schematics &amp; Block Diagram</a> · <a href="https://github.com/Yorev89/Poly-Synth/tree/main/Hardware/PCB" target="_blank" style="color:#A87820;">PCB &amp; Gerber Files</a></div></div>
-        <div class="files-cell"><div class="files-label">Source code</div><div class="files-val"><a href="https://github.com/Yorev89/Poly-Synth" target="_blank" style="color:#A87820;">github.com/Yorev89/Poli-Synth</a></div></div>
+        <div class="files-cell"><div class="files-label">Source code</div><div class="files-val"><a href="https://github.com/Yorev89/Poly-Synth" target="_blank" style="color:#A87820;">github.com/Yorev89/Poly-Synth</a></div></div>
         <div class="files-cell"><div class="files-label">3D housing files</div><div class="files-val"><a href="https://github.com/Yorev89/Poly-Synth/tree/main/Hardware/synth-case-files" target="_blank" style="color:#A87820;">STL files (GitHub)</a></div></div>
         <div class="files-cell"><div class="files-label">Firmware tools</div><div class="files-val">Arduino IDE</div></div>
       </div>
@@ -247,7 +249,6 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A
     </div>
     <div style="margin-bottom:44px;">
       <div class="res-category">Communities</div>
-      <div class="res-item"><div class="res-name">r/synthdiy</div><div class="res-note">Haven't used it personally during this project, but it's active and covers a wide range of skill levels. Worth knowing it exists.</div></div>
       <div class="res-item"><div class="res-name">Elektronauts forum</div><div class="res-note">More advanced, synthesis-focused. Useful for deeper questions about voice architecture and sound design.</div></div>
     </div>
   </div>
@@ -260,6 +261,11 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A
     <h2>The current frontier</h2>
     <div class="next-card">
       <div class="next-label">In progress</div>
+      <h3>Refining the engine</h3>
+      <p>Before adding anything new, I'm going back through the existing firmware: fixing the remaining bugs and getting more out of the current hardware. The first fix is under way: the synth turned out to be tuned almost 30 cents sharp because of a misconfigured audio clock. Next on the list: true stereo output with a properly modulated chorus, a resonant filter, and freeing up processor headroom for both.</p>
+    </div>
+    <div class="next-card">
+      <div class="next-label">In design</div>
       <h3>Automatic music generation</h3>
       <p>The next phase is making the synth generate its own music — algorithmically, driven by external inputs such as sensors. The three-MCU architecture maps cleanly onto this without modification: the STM32 continues as the pure synthesis engine, the first ESP32 generates local MIDI sequences using a Markov chain melody generator, and the second ESP32 acts as a gateway to AI-generated MIDI from the cloud.</p>
       <p>The three-MCU split, originally forced by a hardware constraint, turned out to be exactly the right architecture for what comes next.</p>
@@ -271,7 +277,7 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A
     </div>
     <div style="max-width:640px;">
       <p>This site updates as the project evolves. The build log is written as things happen — including the parts that don't work yet.</p>
-      <p>If you're working on something similar and want to compare notes, contact details will appear here when the site goes public.</p>
+      <p>If you're working on something similar and want to compare notes, you can reach me through the <a href="https://github.com/Yorev89/Poly-Synth/issues" target="_blank" style="color:#A87820;">GitHub repository</a>.</p>
     </div>
   </div>
 </div>
@@ -305,7 +311,7 @@ var chapters = [
     id: "architecture", number: "03", title: "The Architecture", subtitle: "Three MCUs — why, and what each does",
     paragraphs: [
       "The synth is built around three microcontrollers, each with a distinct role.",
-      "The STM32F411 is the synthesis engine. It generates audio samples in real time, manages all active voices, and outputs digital audio over I2S to the PCM5102A DAC. It also handles the hardware 5-pin DIN MIDI input directly — wired to the STM32 and present in the hardware, though currently commented out in the firmware. In practice, most playing happens over Bluetooth.",
+      "The STM32F411 is the synthesis engine. It generates audio samples in real time, manages all active voices, and outputs digital audio over I2S to the PCM5102A DAC. It also handles the hardware 5-pin DIN MIDI input directly — wired to the STM32 and present in the hardware, though currently disabled because its UART pin was repurposed (more on that in the MIDI chapter). In practice, most playing happens over Bluetooth.",
       "The first ESP32 is the control layer: the web-based interface, WiFi access point, and communication with the STM32.",
       "The second ESP32 is the Bluetooth MIDI gateway. Finding MIDI keyboards with a 5-pin DIN connector turned out to be harder than expected, so I added BLE MIDI support to the ESP32 code — and it took a while to realize that BLE and WiFi cannot reliably coexist on the same ESP32. BLE causes severe heap fragmentation that destabilizes the web server; the two fight each other in ways that are not immediately obvious. A dedicated second ESP32 solved this cleanly. It receives BLE MIDI from a keyboard and passes tone commands — C7, E4, and so on — directly to the STM32, not through the first ESP32, because the ESP32 doesn't have enough hardware UARTs to support that routing.",
       "Inelegant on paper. Completely reliable in practice. And as it turned out, the three-MCU split maps cleanly onto the next phase of the project."
@@ -329,7 +335,7 @@ var chapters = [
     id: "audio", number: "05", title: "Audio & Synthesis", subtitle: "Voices, oscillators, effects, and the bugs",
     paragraphs: [
       "The synth supports eight polyphonic voices with adaptive voice scaling — the more notes playing simultaneously, the quieter each individual voice becomes, automatically and transparently, so the combined output stays at a consistent level without clipping. It’s the same principle a mixing engineer applies when balancing a mix, done in real time in firmware.",
-      "Each voice has two main oscillators switchable between sine, sawtooth, square, and triangle waveforms, with Osc2 offering independent level and detune control up to 100 cents. A sub oscillator adds sine or square wave one or two octaves below, and a white noise generator rounds out the voice. Each voice has its own volume ADSR envelope. The filter is a global low-pass covering 20Hz to 18kHz, with its own ADSR envelope and LFO modulation. Two independent LFOs run at 0.1 to 20Hz each, with five waveform options and four modulation targets: pitch, filter cutoff, amplitude, and Osc2 detune. Portamento adds legato glide between notes with adjustable time up to 500ms. The ring modulator is continuously blendable from additive mix to full ring modulation. Effects include stereo 4-tap chorus and stereo delay with five presets. Fifteen factory presets and twelve user-saveable slots stored in non-volatile memory. Intelligent voice stealing kills the quietest releasing voice when all eight are active.",
+      "Each voice has two main oscillators switchable between sine, sawtooth, square, and triangle waveforms, with Osc2 offering independent level and detune control up to 100 cents. A sub oscillator adds sine or square wave one or two octaves below, and a white noise generator rounds out the voice. Each voice has its own volume ADSR envelope. The filter is a global one-pole low-pass covering 200Hz to 10kHz, with its own ADSR envelope and LFO modulation. Two independent LFOs run at 0.1 to 20Hz each, with five waveform options and four modulation targets: pitch, filter cutoff, amplitude, and Osc2 detune. Portamento adds legato glide between notes with adjustable time up to 500ms. The ring modulator is continuously blendable from additive mix to full ring modulation. Effects include a 4-tap chorus and a delay of up to 200ms with four presets — both currently mono, with true stereo planned. Fifteen factory presets and twelve user-saveable slots stored in non-volatile memory. Intelligent voice stealing kills the quietest releasing voice when all eight are active.",
       "And one feature that appeared in no synthesis textbook: a password-protected volume ceiling, accessible through the web interface. It applies to MIDI keyboard volume control (CC7) as well, so it can’t be bypassed from the keyboard. The synth was built for my grandchildren. Their parents needed it.",
       "Getting audio out cleanly was harder than the feature list suggests. The first bug was a click — a sharp transient on every note start and end. Three weeks to find. The fix: delay voice deactivation until the amplitude envelope fully reaches zero. Don't cut a voice mid-cycle.",
       "The second bug was the TADA artifact — a brief chord-like sound appearing on note-on when multiple oscillators had been running. The cause was related to the same principle: voice state wasn't fully reset before reuse. The fix was ensuring both the amplitude and filter envelopes reach zero before a voice is marked available for stealing.",
@@ -340,7 +346,7 @@ var chapters = [
   {
     id: "midi", number: "06", title: "MIDI & Control", subtitle: "DIN, BLE, and the web interface",
     paragraphs: [
-      "MIDI is the standard protocol for communicating musical events — note on, note off, pitch, velocity. The STM32 handles the hardware MIDI DIN input via a 5-pin DIN connector wired directly to it. It's wired to the STM32 and present in the hardware, though currently commented out in the firmware — PA10 was repurposed for the web serial connection to ESP32 #1, with MIDI commands now routed via PA3. In practice most playing happens wirelessly over BLE.",
+      "MIDI is the standard protocol for communicating musical events — note on, note off, pitch, velocity. The STM32 handles the hardware MIDI DIN input via a 5-pin DIN connector wired directly to it. It's wired to the STM32 and present in the hardware, but currently disabled — PA10 was repurposed for the web serial connection to ESP32 #1, with MIDI commands now routed via PA3. In practice most playing happens wirelessly over BLE.",
       "Bluetooth MIDI came later, when finding keyboards with a 5-pin DIN connector proved more difficult than expected. The dedicated second ESP32 handles BLE MIDI reception and passes tone commands directly to the STM32. The system is transparent to a player — connect a wireless keyboard, play.",
       "The web control interface runs on the first ESP32 as a WiFi access point at 192.168.4.1. Connect any device to the synth's network, open a browser, and you have full control over parameters, presets, and settings — including the password-protected volume limit. No internet connection required.",
       "All firmware was written with Claude (Anthropic's AI). I'd describe what I needed, explain what was going wrong, and iterate. AI-assisted development was central to the project — a way to move through problems that would otherwise have taken much longer. The oscilloscope was equally essential. Some bugs are invisible in code and only reveal themselves as waveforms."
