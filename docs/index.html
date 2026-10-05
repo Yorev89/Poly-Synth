@@ -313,7 +313,7 @@ var chapters = [
       "The synth is built around three microcontrollers, each with a distinct role.",
       "The STM32F411 is the synthesis engine. It generates audio samples in real time, manages all active voices, and outputs digital audio over I2S to the PCM5102A DAC. It also handles the hardware 5-pin DIN MIDI input directly — wired to the STM32 and present in the hardware, though currently disabled because its UART pin was repurposed (more on that in the MIDI chapter). In practice, most playing happens over Bluetooth.",
       "The first ESP32 is the control layer: the web-based interface, WiFi access point, and communication with the STM32.",
-      "The second ESP32 is the Bluetooth MIDI gateway. Finding MIDI keyboards with a 5-pin DIN connector turned out to be harder than expected, so I added BLE MIDI support to the ESP32 code — and it took a while to realize that BLE and WiFi cannot reliably coexist on the same ESP32. BLE causes severe heap fragmentation that destabilizes the web server; the two fight each other in ways that are not immediately obvious. A dedicated second ESP32 solved this cleanly. It receives BLE MIDI from a keyboard and passes tone commands — C7, E4, and so on — directly to the STM32, not through the first ESP32, because the ESP32 doesn't have enough hardware UARTs to support that routing.",
+      "The second ESP32 is the Bluetooth MIDI gateway. Finding MIDI keyboards with a 5-pin DIN connector turned out to be harder than expected, so I added BLE MIDI support to the ESP32 code — and it took a while to realize that BLE and WiFi cannot reliably coexist on the same ESP32. BLE causes severe heap fragmentation that destabilizes the web server; the two fight each other in ways that are not immediately obvious. A dedicated second ESP32 solved this cleanly. It receives BLE MIDI from a keyboard and passes tone commands — C7, E4, and so on — directly to the STM32 over its own serial link, rather than relaying them through the first ESP32. The ESP32 does have three hardware UARTs, but one is tied up with USB programming and another has to be remapped to other pins before it can be used. A direct line to the STM32 was simpler, and it keeps the keyboard path independent of the web server.",
       "Inelegant on paper. Completely reliable in practice. And as it turned out, the three-MCU split maps cleanly onto the next phase of the project."
     ],
     placeholder: "Poly-Synth system block diagram", image: "https://raw.githubusercontent.com/Yorev89/Poly-Synth/main/Hardware/Schematics/Poly-Synth Block Diagram.png", imageAlt: "Poly-Synth block diagram showing three-MCU architecture"
@@ -391,9 +391,19 @@ function renderBuild() {
     '<div class="photo-inline">' + (ch.image ? '<img src="' + ch.image + '" alt="' + (ch.imageAlt||"") + '" style="width:100%;border-radius:6px;margin-bottom:10px;background:#ffffff;">' : '') + '<p>&#128247;&nbsp; ' + ch.placeholder + '</p></div>';
 }
 
+// GoatCounter: count section and chapter views as separate pages
+// (the first page load is counted automatically by count.js)
+function gcCount(path, title) {
+  if (window.goatcounter && window.goatcounter.count) {
+    window.goatcounter.count({ path: path, title: title });
+  }
+}
+
 function selectChapter(id) {
   activeChapter = id;
   renderBuild();
+  var ch = chapters.find(function(c) { return c.id === id; });
+  gcCount('/build/' + id, 'Build: ' + (ch ? ch.title : id));
 }
 
 function showPage(id) {
@@ -404,6 +414,7 @@ function showPage(id) {
   if (nb) nb.classList.add('active');
   window.scrollTo(0, 0);
   if (id === 'build') renderBuild();
+  gcCount('/' + id, 'Section: ' + id);
 }
 
 function toggleMenu() {
@@ -453,5 +464,7 @@ function toggleMenu() {
 
 renderBuild();
 </script>
+<script data-goatcounter="https://yorev89.goatcounter.com/count"
+        async src="https://gc.zgo.at/count.js"></script>
 </body>
 </html>
