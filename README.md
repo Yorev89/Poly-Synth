@@ -9,7 +9,7 @@ and hardware resources.
 
 | MCU       | Role                                        |
 |-----------|---------------------------------------------|
-| STM32F411 | Synthesis engine, I2S audio, 5-pin DIN MIDI |
+| STM32F411 | Synthesis engine, I2S audio (DIN MIDI input wired, currently disabled) |
 | ESP32 #1  | Web UI, WiFi access point                   |
 | ESP32 #2  | BLE MIDI keyboard interface                 |
 
@@ -30,7 +30,7 @@ and hardware resources.
 - Filter ADSR envelope with adjustable amount (0–100%), independently enable/disable
 
 ### Filter
-- Global low-pass filter, cutoff range 20Hz–18kHz
+- Global one-pole low-pass filter, cutoff range 200Hz–10kHz
 - LFO modulation of filter cutoff
 
 ### LFO System
@@ -40,14 +40,15 @@ and hardware resources.
 - Modulation targets per LFO: pitch (vibrato), filter cutoff, amplitude (tremolo), Osc2 detune
 
 ### Effects
-- Stereo delay with time, feedback, and mix controls
-- 5 delay presets: Off, Slapback, Short, Medium, Rhythmic
-- Stereo chorus (4-tap)
+- Delay (up to 200ms) with time, feedback, and mix controls
+- 4 delay presets (Slapback, Short, Medium, Rhythmic) plus Off
+- 4-tap chorus
+- Effects are currently mono; true stereo is planned
 
 ### Presets
 - 15 factory presets: Init/Default, Fat Bass, TB-303 Acid, Bell Chime, Synth Lead,
   Analog Pad, Robot Voice, String Ensemble, Metallic Pad, Pluck Bass, Wobble Bass,
-  Sitar, Ambient Wash, Glide Bass, and one additional preset
+  Sitar, Ambient Wash, Glide Bass, 808 Bass
 - 12 user-saveable preset slots (stored in ESP32 non-volatile memory)
 
 ### Connectivity & Control
@@ -58,6 +59,17 @@ and hardware resources.
 - Web-settable volume ceiling for venue or parental control
 - MIDI keyboard volume (CC7) respects the web-set ceiling
 
+## Firmware
+
+| File                       | Board     |
+|----------------------------|-----------|
+| `stm32_Synth_Engine.ino`   | STM32F411 |
+| `esp32_WEB_Controller.ino` | ESP32 #1  |
+| `esp32_BLE.ino`            | ESP32 #2  |
+
+All three are built with the Arduino IDE.
+
 ## Status
-Work in progress. Hardware complete. Firmware verification 
-scheduled for August 2026.
+Hardware complete and verified. Firmware is playable and in active
+development: current work is bug fixing and sound improvements on the
+existing hardware.
