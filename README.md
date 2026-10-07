@@ -16,7 +16,7 @@ and hardware resources.
 ## Features
 
 ### Synthesis Engine
-- 8-voice polyphony with adaptive voice scaling
+- 8-voice polyphony with envelope-based voice scaling and click-free voice stealing
 - Dual oscillators (Osc1 + Osc2) with 4 waveforms each: Sine, Sawtooth, Square, Triangle
 - Sub oscillator: Sine or Square, selectable at -1 or -2 octaves
 - White noise generator with adjustable level
@@ -40,7 +40,7 @@ and hardware resources.
 - Modulation targets per LFO: pitch (vibrato), filter cutoff, amplitude (tremolo), Osc2 detune
 
 ### Effects
-- Delay (up to 200ms) with time, feedback, and mix controls
+- Delay (10–400ms) with time, feedback, and mix controls
 - 4 delay presets (Slapback, Short, Medium, Rhythmic) plus Off
 - 4-tap chorus
 - Effects are currently mono; true stereo is planned
@@ -56,7 +56,8 @@ and hardware resources.
 - 4-tab web interface: Sound, Modulation, FX, Presets
 - BLE MIDI keyboard interface — auto-discovers BLE MIDI devices, with preferred
   device priority and automatic fallback to any BLE MIDI device
-- Web-settable volume ceiling for venue or parental control
+- Web-settable volume ceiling for venue or parental control, protected by a
+  4-digit passcode enforced by the web controller
 - MIDI keyboard volume (CC7) respects the web-set ceiling
 
 ## Firmware
@@ -69,7 +70,17 @@ and hardware resources.
 
 All three are built with the Arduino IDE.
 
+### Required build settings for the STM32
+- Core: STM32duino (STM32 MCU based boards)
+- Board: Generic STM32F4 series, **Board part number: BlackPill F411CE**
+  (uses the board's 25 MHz crystal for accurate tuning)
+- **Tools → Optimize: Fastest (-O3)**. This is required: with the default
+  "Smallest (-Os)" the synthesis loop cannot keep up with 8 voices and
+  the audio distorts.
+
 ## Status
 Hardware complete and verified. Firmware is playable and in active
-development: current work is bug fixing and sound improvements on the
-existing hardware.
+development. Phase 2 bug fixing is complete (tuning, CPU load, clicks,
+voice stealing, pitch bend, release tails, BLE MIDI parsing, volume lock);
+current work is sound improvements on the existing hardware: true stereo
+output, a modulated chorus, and a resonant filter.
