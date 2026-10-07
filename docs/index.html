@@ -175,7 +175,7 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A
       <p>The project started as an analog design using the AD9833 waveform generator, then pivoted to a fully digital architecture when the limitations of single-channel synthesis became clear. The current design runs on three microcontrollers: an STM32F411 as the synthesis engine driving a PCM5102A DAC over I2S, and two ESP32 modules handling control, connectivity, and Bluetooth MIDI.</p>
       <div class="card">
         <div class="card-label">Voice engine</div>
-        <div class="table-row"><span class="table-key">Polyphonic voices</span><span class="table-val">8, with adaptive voice scaling</span></div>
+        <div class="table-row"><span class="table-key">Polyphonic voices</span><span class="table-val">8, with envelope-based voice scaling</span></div>
         <div class="table-row"><span class="table-key">Main oscillators per voice</span><span class="table-val">2 (sine, sawtooth, square, triangle)</span></div>
         <div class="table-row"><span class="table-key">Osc2</span><span class="table-val">Independent level &amp; detune (0–100 cents)</span></div>
         <div class="table-row"><span class="table-key">Sub oscillator</span><span class="table-val">Sine or square, &minus;1 or &minus;2 octaves</span></div>
@@ -188,13 +188,13 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A
         <div class="table-row"><span class="table-key">LFOs</span><span class="table-val">2 independent (0.1–20Hz), 5 waveforms each</span></div>
         <div class="table-row"><span class="table-key">LFO targets</span><span class="table-val">Pitch, filter cutoff, amplitude, Osc2 detune</span></div>
         <div class="table-row"><span class="table-key">Chorus</span><span class="table-val">4-tap, mono (stereo planned)</span></div>
-        <div class="table-row"><span class="table-key">Delay</span><span class="table-val">Up to 200ms, 4 presets (slapback to rhythmic), mono</span></div>
-        <div class="table-row"><span class="table-key">Voice stealing</span><span class="table-val">Intelligent — kills quietest releasing voice</span></div>
+        <div class="table-row"><span class="table-key">Delay</span><span class="table-val">10–400ms, 4 presets (slapback to rhythmic), mono</span></div>
+        <div class="table-row"><span class="table-key">Voice stealing</span><span class="table-val">Click-free — takes the quietest releasing voice, else the oldest note</span></div>
         <div class="table-row"><span class="table-key">Factory presets</span><span class="table-val">15 (Fat Bass, TB-303 Acid, Bell Chime, 808 Bass, and more)</span></div>
         <div class="table-row"><span class="table-key">User presets</span><span class="table-val">12 slots, stored in non-volatile memory</span></div>
         <div class="table-row"><span class="table-key">Web interface</span><span class="table-val">4 tabs: Sound, Modulation, FX, Presets</span></div>
         <div class="table-row"><span class="table-key">BLE MIDI</span><span class="table-val">Auto-discovery, preferred device priority</span></div>
-        <div class="table-row"><span class="table-key">Volume ceiling</span><span class="table-val">Web UI, password protected; respects MIDI CC7</span></div>
+        <div class="table-row"><span class="table-key">Volume ceiling</span><span class="table-val">Web UI, passcode protected (enforced by the controller); MIDI CC7 respects it</span></div>
       </div>
       <div class="card">
         <div class="card-label">Build status</div>
@@ -262,7 +262,7 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A
     <div class="next-card">
       <div class="next-label">In progress</div>
       <h3>Refining the engine</h3>
-      <p>Before adding anything new, I'm going back through the existing firmware: fixing the remaining bugs and getting more out of the current hardware. The first fix is under way: the synth turned out to be tuned almost 30 cents sharp because of a misconfigured audio clock. Next on the list: true stereo output with a properly modulated chorus, a resonant filter, and freeing up processor headroom for both.</p>
+      <p>Before adding anything new, I went back through the existing firmware to fix the remaining bugs and get more out of the current hardware. The bug-fixing round is done: the synth was tuned almost 30 cents sharp because of a misconfigured audio clock, chords overloaded the processor (rendering silence alone took half the time available), and occasional clicks turned out to be the serial command reader blocking the audio. Those are fixed, along with voice stealing, pitch bend, release tails and the BLE MIDI parser — and the delay now reaches 400ms. Next: true stereo output with a properly modulated chorus, and a resonant filter.</p>
     </div>
     <div class="next-card">
       <div class="next-label">In design</div>
@@ -335,7 +335,7 @@ var chapters = [
     id: "audio", number: "05", title: "Audio & Synthesis", subtitle: "Voices, oscillators, effects, and the bugs",
     paragraphs: [
       "The synth supports eight polyphonic voices with adaptive voice scaling — the more notes playing simultaneously, the quieter each individual voice becomes, automatically and transparently, so the combined output stays at a consistent level without clipping. It’s the same principle a mixing engineer applies when balancing a mix, done in real time in firmware.",
-      "Each voice has two main oscillators switchable between sine, sawtooth, square, and triangle waveforms, with Osc2 offering independent level and detune control up to 100 cents. A sub oscillator adds sine or square wave one or two octaves below, and a white noise generator rounds out the voice. Each voice has its own volume ADSR envelope. The filter is a global one-pole low-pass covering 200Hz to 10kHz, with its own ADSR envelope and LFO modulation. Two independent LFOs run at 0.1 to 20Hz each, with five waveform options and four modulation targets: pitch, filter cutoff, amplitude, and Osc2 detune. Portamento adds legato glide between notes with adjustable time up to 500ms. The ring modulator is continuously blendable from additive mix to full ring modulation. Effects include a 4-tap chorus and a delay of up to 200ms with four presets — both currently mono, with true stereo planned. Fifteen factory presets and twelve user-saveable slots stored in non-volatile memory. Intelligent voice stealing kills the quietest releasing voice when all eight are active.",
+      "Each voice has two main oscillators switchable between sine, sawtooth, square, and triangle waveforms, with Osc2 offering independent level and detune control up to 100 cents. A sub oscillator adds sine or square wave one or two octaves below, and a white noise generator rounds out the voice. Each voice has its own volume ADSR envelope. The filter is a global one-pole low-pass covering 200Hz to 10kHz, with its own ADSR envelope and LFO modulation. Two independent LFOs run at 0.1 to 20Hz each, with five waveform options and four modulation targets: pitch, filter cutoff, amplitude, and Osc2 detune. Portamento adds legato glide between notes with adjustable time up to 500ms. The ring modulator is continuously blendable from additive mix to full ring modulation. Effects include a 4-tap chorus and a delay of 10 to 400ms with four presets — both currently mono, with true stereo planned. Fifteen factory presets and twelve user-saveable slots stored in non-volatile memory. When all eight voices are busy, a new note takes over the quietest releasing voice (or the oldest held note) without a click: the new note's envelope starts from the old one's level.",
       "And one feature that appeared in no synthesis textbook: a password-protected volume ceiling, accessible through the web interface. It applies to MIDI keyboard volume control (CC7) as well, so it can’t be bypassed from the keyboard. The synth was built for my grandchildren. Their parents needed it.",
       "Getting audio out cleanly was harder than the feature list suggests. The first bug was a click — a sharp transient on every note start and end. Three weeks to find. The fix: delay voice deactivation until the amplitude envelope fully reaches zero. Don't cut a voice mid-cycle.",
       "The second bug was the TADA artifact — a brief chord-like sound appearing on note-on when multiple oscillators had been running. The cause was related to the same principle: voice state wasn't fully reset before reuse. The fix was ensuring both the amplitude and filter envelopes reach zero before a voice is marked available for stealing.",
