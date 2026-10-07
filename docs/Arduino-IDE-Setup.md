@@ -16,7 +16,7 @@ Install these via Arduino IDE → Board Manager:
 | Setting | Value |
 |---------|-------|
 | Board | STM32 MCU based boards → Generic STM32F4 Series |
-| Board part number | Generic F411CEUx |
+| Board part number | BlackPill F411CE |
 | Upload method | STM32CubeProgrammer (DFU) |
 | U(S)ART support | Enabled (generic Serial) |
 | USB support | CDC (generic Serial supersede U(S)ART) |
