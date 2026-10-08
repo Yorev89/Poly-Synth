@@ -6,8 +6,9 @@
  * - 8-voice polyphony with adaptive voice scaling and click-free voice stealing
  * - Dual oscillators + sub oscillator (4 waveforms each), ring modulator
  * - ADSR amplitude envelope per voice + filter envelope
- * - Global one-pole low-pass filter with LFO modulation
- * - Delay (10-400 ms, presets) + 4-tap chorus (output currently mono)
+ * - Global resonant 2-pole (12 dB/oct) state-variable low-pass, LFO + envelope
+ * - Stereo voice panning by pitch; delay (10-400 ms, presets, ping-pong mode);
+ *   modulated stereo chorus (10 ms +/- 2.5 ms, 0.5 Hz, L/R 90 deg apart)
  * - 2x LFO (pitch, filter, amplitude, detune modulation)
  * - 15 factory presets + 12 user preset slots (stored on ESP32 #1)
  * - I2S sample rate computed at boot; tuning compensated to the real rate
@@ -96,6 +97,7 @@ struct Voice {
   Envelope env;
   Envelope filterEnv;
   float velocity;
+  float panL, panR;          // Stereo gains, set from the note's pitch at note-on
   unsigned long noteOnTime;
   // Portamento (cheap phaseInc-based approach)
   bool portaActive;
@@ -111,11 +113,16 @@ struct Voice {
 
 Voice voices[MAX_VOICES];
 
+// Global resonant low-pass filter: 2-pole (12 dB/octave) state-variable filter
+// in the trapezoidal / zero-delay-feedback form (Andrew Simper, Cytomic),
+// which stays stable and in tune up to the highest cutoff settings.
+// (Replaces the one-pole 6 dB/octave filter that had no resonance.)
 struct GlobalFilter {
-  float z1L;
-  float z1R;
-  float a;
+  float a1, a2, a3;      // coefficients for the current cutoff / resonance
+  float ic1L, ic2L;      // left channel integrator states
+  float ic1R, ic2R;      // right channel integrator states
 } globalFilter;
+float filterResonance = 0.0f;  // 0..1 (0 = flat Butterworth, 1 = Q 10, strong squelch)
 
 // ==================== SYNTH PARAMETERS ====================
 
@@ -186,6 +193,7 @@ float delayTime = 0.0;       // 0 seconds (off)
 float delayFeedback = 0.0;
 float delayMix = 0.0;
 int delayPreset = 0;
+bool delayPingPong = false;  // ping-pong mode: echoes alternate left / right
 int feedbackPreset = 1;
 
 
@@ -196,7 +204,13 @@ int chorusWritePos = 0;
 float chorusMix = 0.6;
 bool chorusEnabled = false;
 
-const int chorusTaps[4] = {44, 88, 132, 176};
+// Modulated stereo chorus: one delay line per channel, read at a delay that a
+// slow LFO sweeps around CHORUS_BASE_MS; left and right LFOs are a quarter
+// cycle apart for width. (Replaces the old static 4-tap comb filter.)
+#define CHORUS_BASE_MS   10.0f   // centre delay
+#define CHORUS_DEPTH_MS   2.5f   // sweep +/- this much
+#define CHORUS_RATE_HZ    0.5f   // LFO rate
+float chorusLfoPhase = 0.0f;     // 0..1
 
 float masterVolume = 1.0;  // Maximum (was 0.7 = +43% gain)
 float volumeCeiling = 1.0;  // 0-1: Web-locked maximum volume (parent control)
@@ -347,6 +361,22 @@ void setFeedbackPreset(int preset) {
   }
 }
 
+// Phase increment with LFO modulation; unmodulated increments stay exact
+inline uint32_t modInc(uint32_t inc, float mult, bool on) {
+  return on ? (uint32_t)(inc * mult) : inc;
+}
+
+// Returns the wavetable for a waveform (chosen once per buffer instead of a
+// switch on every sample)
+inline const int16_t* waveTablePtr(WaveType type) {
+  switch(type) {
+    case WAVE_SAW:      return sawTable;
+    case WAVE_SQUARE:   return squareTable;
+    case WAVE_TRIANGLE: return triangleTable;
+    default:            return sineTable;
+  }
+}
+
 inline int16_t getWaveSample(WaveType type, uint32_t phase) {
   uint32_t index = (phase >> 24) & 0xFF;
   switch(type) {
@@ -392,6 +422,8 @@ void initVoice(Voice* v) {
   v->active = false;
   v->note = 0;
   v->velocity = 0;
+  v->panL = 1.0f;
+  v->panR = 1.0f;
   v->osc1.phase = 0;
   v->osc2.phase = 0;
   v->env.stage = ENV_IDLE;
@@ -401,21 +433,19 @@ void initVoice(Voice* v) {
 void updateGlobalFilter(float cutoffHz) {
   if (cutoffHz < 20.0f) cutoffHz = 20.0f;
   if (cutoffHz > 18000.0f) cutoffHz = 18000.0f;
-  
   float fc = cutoffHz / SAMPLE_RATE;
-  if (fc > 0.49f) fc = 0.49f;
-  if (fc < 0.0001f) fc = 0.0001f;
+  if (fc > 0.45f) fc = 0.45f;
   
-  globalFilter.a = 1.0f - (2.0f * (float)PI * fc);
-  
-  if (globalFilter.a < 0.001f) globalFilter.a = 0.001f;
-  if (globalFilter.a > 0.999f) globalFilter.a = 0.999f;
-  
-  if (isnan(globalFilter.a) || isinf(globalFilter.a)) {
-    globalFilter.a = 0.95f;
-    globalFilter.z1L = 0;
-    globalFilter.z1R = 0;
-  }
+  float g = tanf((float)PI * fc);                   // pre-warped cutoff
+  float k = 1.4142f - 1.3142f * filterResonance;    // damping: 1.414 (Q 0.71) .. 0.1 (Q 10)
+  globalFilter.a1 = 1.0f / (1.0f + g * (g + k));
+  globalFilter.a2 = g * globalFilter.a1;
+  globalFilter.a3 = g * globalFilter.a2;
+}
+
+void resetGlobalFilter() {
+  globalFilter.ic1L = globalFilter.ic2L = 0.0f;
+  globalFilter.ic1R = globalFilter.ic2R = 0.0f;
 }
 
 // Bend ratio currently applied to the voices (1.0 = no bend)
@@ -450,6 +480,22 @@ void applyPitchBend() {
       voices[v].sub.phaseInc  = incSub;
     }
   }
+}
+
+// ==================== STEREO VOICE PANNING ====================
+// Each note is placed in the stereo field by pitch, like a piano seen from the
+// player's seat: low notes slightly left, high notes slightly right, middle C
+// centred. PAN_WIDTH 0 = mono, 1 = full left/right at the keyboard extremes.
+#define PAN_WIDTH 0.5f
+void setVoicePan(Voice* v, uint8_t note) {
+  float p = ((float)note - 60.0f) / 30.0f;      // -1 at C2-ish ... +1 at F#6-ish
+  if (p >  1.0f) p =  1.0f;
+  if (p < -1.0f) p = -1.0f;
+  p *= PAN_WIDTH;
+  // Constant-power pan law, scaled so a centred note keeps its old level (1.0)
+  float theta = (p + 1.0f) * 0.25f * (float)PI;  // 0 .. PI/2
+  v->panL = 1.41421356f * cosf(theta);
+  v->panR = 1.41421356f * sinf(theta);
 }
 
 void noteOn(uint8_t note, float velocity) {
@@ -493,6 +539,7 @@ void noteOn(uint8_t note, float velocity) {
   // Don't activate yet - set all parameters first
   targetVoice->note = note;
   targetVoice->velocity = velocity;
+  setVoicePan(targetVoice, note);
   targetVoice->noteOnTime = millis();
   
   float freq = noteToFreq(note);
@@ -606,6 +653,14 @@ void noteOff(uint8_t note) {
   }
 }
 
+// Releases every sounding note as if its key had been lifted (tails and
+// delay continue naturally)
+void releaseAllNotes() {
+  for (int i = 0; i < MAX_VOICES; i++) {
+    if (voices[i].active) noteOff(voices[i].note);
+  }
+}
+
 void allNotesOff() {
   for (int i = 0; i < MAX_VOICES; i++) {
     voices[i].active = false;
@@ -678,6 +733,18 @@ inline void processEnvelopeN(Envelope* env, int n) {
   }
 }
 
+// Reads a chorus buffer 'delaySamples' behind the write position, with linear
+// interpolation between neighbouring samples (fractional delay)
+inline float chorusRead(const float* buf, float delaySamples) {
+  float pos = (float)chorusWritePos - delaySamples;
+  if (pos < 0.0f) pos += CHORUS_BUFFER_SIZE;
+  int i0 = (int)pos;
+  float frac = pos - (float)i0;
+  int i1 = i0 + 1;
+  if (i1 >= CHORUS_BUFFER_SIZE) i1 = 0;
+  return buf[i0] + frac * (buf[i1] - buf[i0]);
+}
+
 void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
   
   // Update LFO1 once per buffer
@@ -736,8 +803,8 @@ void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
   
   // Apply LFO to filter (once per buffer, not per sample!)
   float currentFilterCutoff = filterCutoff + lfoFilterMod;
-  if (currentFilterCutoff < 200.0f) currentFilterCutoff = 200.0f;
-  if (currentFilterCutoff > 10000.0f) currentFilterCutoff = 10000.0f;
+  if (currentFilterCutoff < 60.0f) currentFilterCutoff = 60.0f;
+  if (currentFilterCutoff > 18000.0f) currentFilterCutoff = 18000.0f;
   
   // Filter envelope at control rate (once per buffer, was per sample - the
   // single most expensive feature). Filter stays global: the highest
@@ -752,14 +819,18 @@ void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
       }
     }
     currentFilterCutoff += maxFilterEnv * filterEnvAmount * 6000.0f;  // 0 to +6000 Hz
-    if (currentFilterCutoff > 10000.0f) currentFilterCutoff = 10000.0f;
+    if (currentFilterCutoff > 18000.0f) currentFilterCutoff = 18000.0f;
   }
   
   // Coefficient ramps linearly across the buffer from the previous value to
   // the new one, so cutoff changes are smooth (no steps, no zipper noise)
-  float filterA = globalFilter.a;
+  float fa1 = globalFilter.a1, fa2 = globalFilter.a2, fa3 = globalFilter.a3;
   updateGlobalFilter(currentFilterCutoff);
-  float filterAStep = (globalFilter.a - filterA) / (float)frames;
+  float fa1Step = (globalFilter.a1 - fa1) / (float)frames;
+  float fa2Step = (globalFilter.a2 - fa2) / (float)frames;
+  float fa3Step = (globalFilter.a3 - fa3) / (float)frames;
+  // Input trim: resonance boosts the cutoff region, so pull the level down a little
+  float filterInGain = 1.0f - 0.5f * filterResonance;
   
   // Convert pitch mod to multiplier (once per buffer)
   static float smoothedPitchMult = 1.0f;  // Static to preserve between buffers
@@ -808,136 +879,159 @@ void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
   smoothedScale = smoothedScale + smoothFactor * (targetScale - smoothedScale);
   float voiceScale = smoothedScale;
   
+  // Chorus LFO at control rate: target delays for the end of this buffer;
+  // the per-sample delay ramps linearly to them (smooth, no zipper noise)
+  static float chorusDelayL = CHORUS_BASE_MS * 0.001f * TARGET_SAMPLE_RATE;
+  static float chorusDelayR = CHORUS_BASE_MS * 0.001f * TARGET_SAMPLE_RATE;
+  float chorusDelayStepL, chorusDelayStepR;
+  {
+    chorusLfoPhase += CHORUS_RATE_HZ * (numSamples / 2) / SAMPLE_RATE;
+    if (chorusLfoPhase >= 1.0f) chorusLfoPhase -= 1.0f;
+    float w = 2.0f * (float)PI * chorusLfoPhase;
+    float baseS  = CHORUS_BASE_MS  * 0.001f * SAMPLE_RATE;
+    float depthS = CHORUS_DEPTH_MS * 0.001f * SAMPLE_RATE;
+    float targetL = baseS + depthS * sinf(w);
+    float targetR = baseS + depthS * cosf(w);   // quarter cycle apart
+    chorusDelayStepL = (targetL - chorusDelayL) / (float)(numSamples / 2);
+    chorusDelayStepR = (targetR - chorusDelayR) / (float)(numSamples / 2);
+  }
+  
+  // ── Per-buffer precomputation (was done per sample, per voice) ─────────
+  // Everything that only changes once per buffer is computed here, so the
+  // per-sample voice loop below does the minimum work.
+  bool pitchModOn  = (lfo1Enabled && lfo1.pitchDepth > 0.0f) || (lfo2Enabled && lfo2.pitchDepth > 0.0f);
+  bool detuneModOn = (lfo1Enabled && lfo1.osc2DetuneDepth > 0.0f) || (lfo2Enabled && lfo2.osc2DetuneDepth > 0.0f);
+  bool ampModOn    = (lfo1Enabled && lfo1.ampDepth > 0.0f) || (lfo2Enabled && lfo2.ampDepth > 0.0f);
+  bool portaOn     = portamentoEnabled;
+  float pitchMult  = pitchModOn ? smoothedPitchMult : 1.0f;
+  float osc2Mult   = pitchMult * (detuneModOn ? smoothedDetuneMult : 1.0f);
+  
+  // Oscillator mix coefficients on raw int16 samples:
+  //   (1-r)*s1 + (1-r)*o2*s2 + 3*r*o2*s1*s2 (ring) + sub*subLevel + noise*noiseLevel
+  bool  ringOn = (ringModAmount > 0.0f);
+  float cOsc1  = ringOn ? (1.0f - ringModAmount) : 1.0f;
+  float cOsc2  = cOsc1 * osc2Level;
+  float cRing  = ringOn ? (3.0f * ringModAmount * osc2Level / 32768.0f) : 0.0f;
+  
+  // Constant part of the voice gain: int16 -> float, /4 headroom, LFO amp, voice scaling
+  float gainConst = (1.0f / 32768.0f / 4.0f) * (ampModOn ? smoothedAmpMod : 1.0f) * voiceScale;
+  
+  const int16_t* tab1[MAX_VOICES];
+  const int16_t* tab2[MAX_VOICES];
+  const int16_t* tabSub[MAX_VOICES];
+  uint32_t inc1[MAX_VOICES], inc2[MAX_VOICES], incSub[MAX_VOICES];
+  float voiceGainL[MAX_VOICES], voiceGainR[MAX_VOICES];
+  for (int v = 0; v < MAX_VOICES; v++) {
+    Voice* voice = &voices[v];
+    if (!voice->active) continue;
+    tab1[v]   = waveTablePtr(voice->osc1.waveType);
+    tab2[v]   = waveTablePtr(voice->osc2.waveType);
+    tabSub[v] = waveTablePtr(voice->sub.waveType);
+    inc1[v]   = modInc(voice->osc1.phaseInc, pitchMult, pitchModOn);
+    inc2[v]   = modInc(voice->osc2.phaseInc, osc2Mult, pitchModOn || detuneModOn);
+    incSub[v] = modInc(voice->sub.phaseInc, pitchMult, pitchModOn);  // sub now follows vibrato too
+    float g = voice->velocity * gainConst;
+    voiceGainL[v] = g * voice->panL;
+    voiceGainR[v] = g * voice->panR;
+  }
+  
   for (int i = 0; i < numSamples / 2; i++) {
-    int32_t mixL = 0;
-    int32_t mixR = 0;
+    float mixLf = 0.0f;
+    float mixRf = 0.0f;
     
     for (int v = 0; v < MAX_VOICES; v++) {
       Voice* voice = &voices[v];
+      if (!voice->active) continue;
       
-      if (voice->active) {
-        int16_t sample1 = getWaveSample(voice->osc1.waveType, voice->osc1.phase);
-        int16_t sample2 = getWaveSample(voice->osc2.waveType, voice->osc2.phase);
-        int16_t sampleSub = getWaveSample(voice->sub.waveType, voice->sub.phase);
-        int16_t sampleNoise = generateNoise();
-        
-        // ── FULL FLOAT SIGNAL CHAIN ──────────────────────────────────
-        // Convert samples to normalized float (-1.0 to +1.0) ONCE
-        float sample1f  = (float)sample1  / 32768.0f;
-        float sample2f  = (float)sample2  / 32768.0f;
-        float sampleSubf = (float)sampleSub / 32768.0f;
-        float sampleNoisef = (float)sampleNoise / 32768.0f;
-        
-        // --- Oscillator mix (ring mod or additive) ---
-        float osc1_2_mixf;
-        if (ringModAmount > 0.0f) {
-          float additive = sample1f + (sample2f * osc2Level);
-          float ringMod  = sample1f * sample2f * osc2Level * 3.0f;  // 3× compensates amplitude loss
-          osc1_2_mixf = additive * (1.0f - ringModAmount) + ringMod * ringModAmount;
-        } else {
-          osc1_2_mixf = sample1f + (sample2f * osc2Level);
-        }
-        
-        // --- Sub and noise mix ---
-        float voiceSamplef = (osc1_2_mixf +
-                              sampleSubf   * subLevel +
-                              sampleNoisef * noiseLevel) / 4.0f;
-        
-        // --- Envelope, velocity, LFO amp, voiceScale (all in float) ---
-        voiceSamplef *= voice->env.level;
-        voiceSamplef *= voice->velocity;
-        
-        if ((lfo1Enabled && lfo1.ampDepth > 0.0f) || (lfo2Enabled && lfo2.ampDepth > 0.0f)) {
-          voiceSamplef *= smoothedAmpMod;
-        }
-        
-        voiceSamplef *= voiceScale;
-        
-        // --- Single conversion back to int32 at the end ---
-        int32_t voiceSample = (int32_t)(voiceSamplef * 32768.0f);
-        
-        mixL += voiceSample;
-        mixR += voiceSample;
-        
-        // Apply modulations to phase increment (use smoothed values)
-        
+      // --- Oscillators: direct table reads (index = top 8 bits of phase) ---
+      float s1 = (float)tab1[v][voice->osc1.phase >> 24];
+      float s2 = (float)tab2[v][voice->osc2.phase >> 24];
+      float sS = (float)tabSub[v][voice->sub.phase >> 24];
+      float sN = (float)generateNoise();
+      
+      float mix = cOsc1 * s1 + cOsc2 * s2 + subLevel * sS + noiseLevel * sN;
+      if (ringOn) mix += cRing * s1 * s2;
+      
+      float x = mix * voice->env.level;
+      mixLf += x * voiceGainL[v];
+      mixRf += x * voiceGainR[v];
+      
+      // --- Advance phases ---
+      if (portaOn && voice->portaActive) {
         // Portamento: accumulate in float to avoid uint32_t stepping artifacts
-        if (portamentoEnabled && voice->portaActive) {
-          voice->portaInc1f   *= voice->portaRate;
-          voice->portaInc2f   *= voice->portaRate;
-          voice->portaSubIncf *= voice->portaRate;
-          // Write to oscillators as uint32_t
-          voice->osc1.phaseInc = (uint32_t)voice->portaInc1f;
-          voice->osc2.phaseInc = (uint32_t)voice->portaInc2f;
-          voice->sub.phaseInc  = (uint32_t)voice->portaSubIncf;
-          // Stop when reached target
-          bool arrived = (voice->portaRate >= 1.0f) ?
-            (voice->portaInc1f >= (float)voice->portaTargetInc1) :
-            (voice->portaInc1f <= (float)voice->portaTargetInc1);
-          if (arrived) {
-            voice->osc1.phaseInc = voice->portaTargetInc1;
-            voice->osc2.phaseInc = voice->portaTargetInc2;
-            voice->sub.phaseInc  = voice->portaTargetSubInc;
-            voice->portaActive   = false;
-          }
+        voice->portaInc1f   *= voice->portaRate;
+        voice->portaInc2f   *= voice->portaRate;
+        voice->portaSubIncf *= voice->portaRate;
+        voice->osc1.phaseInc = (uint32_t)voice->portaInc1f;
+        voice->osc2.phaseInc = (uint32_t)voice->portaInc2f;
+        voice->sub.phaseInc  = (uint32_t)voice->portaSubIncf;
+        bool arrived = (voice->portaRate >= 1.0f) ?
+          (voice->portaInc1f >= (float)voice->portaTargetInc1) :
+          (voice->portaInc1f <= (float)voice->portaTargetInc1);
+        if (arrived) {
+          voice->osc1.phaseInc = voice->portaTargetInc1;
+          voice->osc2.phaseInc = voice->portaTargetInc2;
+          voice->sub.phaseInc  = voice->portaTargetSubInc;
+          voice->portaActive   = false;
         }
-        
-        uint32_t phaseInc1 = voice->osc1.phaseInc;
-        uint32_t phaseInc2 = voice->osc2.phaseInc;
-        
-        if ((lfo1Enabled && lfo1.pitchDepth > 0.0f) || (lfo2Enabled && lfo2.pitchDepth > 0.0f)) {
-          phaseInc1 = (uint32_t)(phaseInc1 * smoothedPitchMult);
-          phaseInc2 = (uint32_t)(phaseInc2 * smoothedPitchMult);
-        }
-        
-        if ((lfo1Enabled && lfo1.osc2DetuneDepth > 0.0f) || (lfo2Enabled && lfo2.osc2DetuneDepth > 0.0f)) {
-          phaseInc2 = (uint32_t)(phaseInc2 * smoothedDetuneMult);
-        }
-        
-        voice->osc1.phase += phaseInc1;
-        voice->osc2.phase += phaseInc2;
-        voice->sub.phase += voice->sub.phaseInc;  // Sub not affected by LFO pitch mod
-        
-        processEnvelope(&voice->env);
-        
-        // (Filter envelope is processed once per buffer, before this loop)
-        
-        // Auto-release for pluck sounds: if sustain is very low (<1%) and we're in sustain stage
-        // This allows pluck sounds (low/zero sustain) to finish naturally without holding the key
-        if (voice->env.stage == ENV_SUSTAIN && voice->env.sustainLevel < 0.01f) {
-          voice->env.stage = ENV_RELEASE;
-        }
-        
-        // Only deactivate voices that are in RELEASE and have faded out, or are IDLE
-        if (voice->env.stage == ENV_IDLE) {
-          voice->active = false;
-          voice->env.level = 0;
-        }
-        else if (voice->env.stage == ENV_RELEASE && voice->env.level <= 0.0001f) {
-          voice->active = false;
-          voice->env.level = 0;
-          voice->env.stage = ENV_IDLE;
-        }
+        inc1[v]   = modInc(voice->osc1.phaseInc, pitchMult, pitchModOn);
+        inc2[v]   = modInc(voice->osc2.phaseInc, osc2Mult, pitchModOn || detuneModOn);
+        incSub[v] = modInc(voice->sub.phaseInc, pitchMult, pitchModOn);
+      }
+      voice->osc1.phase += inc1[v];
+      voice->osc2.phase += inc2[v];
+      voice->sub.phase  += incSub[v];
+      
+      processEnvelope(&voice->env);
+      
+      // Auto-release for pluck sounds: very low sustain (<1%) releases by itself
+      if (voice->env.stage == ENV_SUSTAIN && voice->env.sustainLevel < 0.01f) {
+        voice->env.stage = ENV_RELEASE;
+      }
+      
+      // Deactivate voices that have faded out or are idle
+      if (voice->env.stage == ENV_IDLE) {
+        voice->active = false;
+        voice->env.level = 0;
+      }
+      else if (voice->env.stage == ENV_RELEASE && voice->env.level <= 0.0001f) {
+        voice->active = false;
+        voice->env.level = 0;
+        voice->env.stage = ENV_IDLE;
       }
     }
     
-    // Per-voice scaling already applied above - no post-mix scaling needed
+    // mixLf / mixRf now carry the panned stereo voice mix
     
-    float mixLf = mixL / 32768.0f;
-    float mixRf = mixR / 32768.0f;
+    // Resonant 2-pole state-variable low-pass (coefficients ramped per sample)
+    fa1 += fa1Step; fa2 += fa2Step; fa3 += fa3Step;
+    float filtL, filtR;
+    {
+      float v3 = mixLf * filterInGain - globalFilter.ic2L;
+      float v1 = fa1 * globalFilter.ic1L + fa2 * v3;
+      float v2 = globalFilter.ic2L + fa2 * globalFilter.ic1L + fa3 * v3;
+      globalFilter.ic1L = 2.0f * v1 - globalFilter.ic1L;
+      globalFilter.ic2L = 2.0f * v2 - globalFilter.ic2L;
+      filtL = v2;
+    }
+    {
+      float v3 = mixRf * filterInGain - globalFilter.ic2R;
+      float v1 = fa1 * globalFilter.ic1R + fa2 * v3;
+      float v2 = globalFilter.ic2R + fa2 * globalFilter.ic1R + fa3 * v3;
+      globalFilter.ic1R = 2.0f * v1 - globalFilter.ic1R;
+      globalFilter.ic2R = 2.0f * v2 - globalFilter.ic2R;
+      filtR = v2;
+    }
     
-    // Simple one-pole low-pass filter (original, working version)
-    filterA += filterAStep;
-    globalFilter.z1L = filterA * globalFilter.z1L + (1.0f - filterA) * mixLf;
-    globalFilter.z1R = filterA * globalFilter.z1R + (1.0f - filterA) * mixRf;
-    
-    if (isnan(globalFilter.z1L) || isinf(globalFilter.z1L)) globalFilter.z1L = 0;
-    if (isnan(globalFilter.z1R) || isinf(globalFilter.z1R)) globalFilter.z1R = 0;
-    
-    if (globalFilter.z1L > 2.0f) globalFilter.z1L = 2.0f;
-    if (globalFilter.z1L < -2.0f) globalFilter.z1L = -2.0f;
-    if (globalFilter.z1R > 2.0f) globalFilter.z1R = 2.0f;
-    if (globalFilter.z1R < -2.0f) globalFilter.z1R = -2.0f;
+    // Safety: recover from any numeric fault, keep output in range
+    if (isnan(filtL) || isinf(filtL) || isnan(filtR) || isinf(filtR)) {
+      resetGlobalFilter();
+      filtL = filtR = 0.0f;
+    }
+    if (filtL >  2.0f) filtL =  2.0f;
+    if (filtL < -2.0f) filtL = -2.0f;
+    if (filtR >  2.0f) filtR =  2.0f;
+    if (filtR < -2.0f) filtR = -2.0f;
     
     int32_t outL, outR;  // computed after delay and chorus
     
@@ -952,8 +1046,18 @@ void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
     float delayOutL = delayBufferL[delayReadPos] * (1.0f / DELAY_SCALE);
     float delayOutR = delayBufferR[delayReadPos] * (1.0f / DELAY_SCALE);
     
-    float delayInL = globalFilter.z1L + (delayOutL * delayFeedback);
-    float delayInR = globalFilter.z1R + (delayOutR * delayFeedback);
+    float delayInL, delayInR;
+    if (delayPingPong) {
+      // Mono input enters the left line; left echoes feed the right line,
+      // right echoes feed back into the left. Echoes: L at T, R at 2T,
+      // L at 3T (x feedback), R at 4T (x feedback) ... With feedback 0 you
+      // still get one echo on each side.
+      delayInL = (filtL + filtR) * 0.5f + delayOutR * delayFeedback;
+      delayInR = delayOutL;
+    } else {
+      delayInL = filtL + (delayOutL * delayFeedback);
+      delayInR = filtR + (delayOutR * delayFeedback);
+    }
     if (delayInL >  1.9999f) delayInL =  1.9999f;
     if (delayInL < -1.9999f) delayInL = -1.9999f;
     if (delayInR >  1.9999f) delayInR =  1.9999f;
@@ -964,42 +1068,30 @@ void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
     delayWritePos++;
     if (delayWritePos >= DELAY_BUFFER_SIZE) delayWritePos = 0;
     
-    float finalL = globalFilter.z1L * (1.0f - delayMix) + delayOutL * delayMix;
-    float finalR = globalFilter.z1R * (1.0f - delayMix) + delayOutR * delayMix;
+    float finalL = filtL * (1.0f - delayMix) + delayOutL * delayMix;
+    float finalR = filtR * (1.0f - delayMix) + delayOutR * delayMix;
     
-    // Chorus
+    // Chorus. The buffers are written even when chorus is off, so switching
+    // it on never replays stale audio.
+    float chorusInL = finalL, chorusInR = finalR;
+    if (chorusInL >  1.0f) chorusInL =  1.0f;
+    if (chorusInL < -1.0f) chorusInL = -1.0f;
+    if (chorusInR >  1.0f) chorusInR =  1.0f;
+    if (chorusInR < -1.0f) chorusInR = -1.0f;
+    chorusBufferL[chorusWritePos] = chorusInL;
+    chorusBufferR[chorusWritePos] = chorusInR;
+    
     if (chorusEnabled) {
-      float chorusOutL = 0.0f;
-      float chorusOutR = 0.0f;
-      
-      for (int t = 0; t < 4; t++) {
-        int readPos = chorusWritePos - chorusTaps[t];
-        if (readPos < 0) readPos += CHORUS_BUFFER_SIZE;
-        
-        chorusOutL += chorusBufferL[readPos];
-        chorusOutR += chorusBufferR[readPos];
-      }
-      
-      chorusOutL = (chorusOutL / 4.0f);  // Removed 1.2× gain
-      chorusOutR = (chorusOutR / 4.0f);
-      
-      // Soft clip input to chorus buffer to prevent buildup
-      float chorusInputL = finalL;
-      float chorusInputR = finalR;
-      if (chorusInputL > 1.0f) chorusInputL = 1.0f;
-      if (chorusInputL < -1.0f) chorusInputL = -1.0f;
-      if (chorusInputR > 1.0f) chorusInputR = 1.0f;
-      if (chorusInputR < -1.0f) chorusInputR = -1.0f;
-      
-      chorusBufferL[chorusWritePos] = chorusInputL;
-      chorusBufferR[chorusWritePos] = chorusInputR;
-      
-      chorusWritePos++;
-      if (chorusWritePos >= CHORUS_BUFFER_SIZE) chorusWritePos = 0;
-      
-      finalL = finalL * (1.0f - chorusMix) + chorusOutL * chorusMix;  // Removed 1.1× gain
-      finalR = finalR * (1.0f - chorusMix) + chorusOutR * chorusMix;
+      chorusDelayL += chorusDelayStepL;
+      chorusDelayR += chorusDelayStepR;
+      float wetL = chorusRead(chorusBufferL, chorusDelayL);
+      float wetR = chorusRead(chorusBufferR, chorusDelayR);
+      finalL = finalL * (1.0f - chorusMix) + wetL * chorusMix;
+      finalR = finalR * (1.0f - chorusMix) + wetR * chorusMix;
     }
+    
+    chorusWritePos++;
+    if (chorusWritePos >= CHORUS_BUFFER_SIZE) chorusWritePos = 0;
     
     outL = (int32_t)(finalL * masterVolume * 32768.0f);
     outR = (int32_t)(finalR * masterVolume * 32768.0f);
@@ -1089,10 +1181,14 @@ void handleCC(uint8_t controller, uint8_t value, bool fromMIDI = false) {
       Serial.print((int)(ringModAmount * 100));
       Serial.println("%");
       break;
-    case 123:
-    case 120:
+    case 123:  // All Notes Off: release every note gracefully (keyboard
+               // disconnect, MIDI standard behaviour)
+      releaseAllNotes();
+      Serial.println("All Notes Off (release)");
+      break;
+    case 120:  // All Sound Off: immediate silence (web panic button)
       allNotesOff();
-      Serial.println("All Notes Off");
+      Serial.println("All Sound Off");
       break;
     case 50:
       if (value > 0) {
@@ -1477,6 +1573,17 @@ void processCommand(String& cmd, Stream& port, bool fromMIDI) {
         Serial.print("✓ Filter Envelope: ");
         Serial.println(filterEnvEnabled ? "ON" : "OFF");
       }
+      else if (param == "resonance") {
+        filterResonance = value / 127.0f;   // 0..1
+        Serial.print("✓ Resonance: ");
+        Serial.print((int)(filterResonance * 100));
+        Serial.println("%");
+      }
+      else if (param == "pingpong") {
+        delayPingPong = (value > 0);
+        Serial.print("✓ Ping-pong delay: ");
+        Serial.println(delayPingPong ? "ON" : "OFF");
+      }
       else if (param == "chorusenable") {
         chorusEnabled = (value > 0);
         Serial.print("✓ Chorus: ");
@@ -1610,8 +1717,7 @@ void setup() {
   
   generateWavetables();
   
-  globalFilter.z1L = 0;
-  globalFilter.z1R = 0;
+  resetGlobalFilter();
   updateGlobalFilter(filterCutoff);
   
   // Initialize LFO1
@@ -1751,15 +1857,10 @@ void loop() {
       diagMaxLatencyCycles = 0;
     }
     
-    for (int i = 0; i < MAX_VOICES; i++) {
-      if (voices[i].active && (millis() - voices[i].noteOnTime) > 30000) {
-        voices[i].active = false;
-        voices[i].env.stage = ENV_IDLE;
-        voices[i].env.level = 0;
-        Serial.print("Watchdog killed stuck note: ");
-        Serial.println(voices[i].note);
-      }
-    }
+    // (30-second stuck-note watchdog removed: it also cut legitimately held
+    //  notes. Stuck notes are now prevented at the source - fixed BLE parser,
+    //  non-blocking serial reader, "all notes off" on BLE disconnect - and the
+    //  web page's All Notes Off button remains as the manual panic.)
   }
   
 }
