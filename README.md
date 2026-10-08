@@ -30,8 +30,9 @@ and hardware resources.
 - Filter ADSR envelope with adjustable amount (0–100%), independently enable/disable
 
 ### Filter
-- Global one-pole low-pass filter, cutoff range 200Hz–10kHz
-- LFO modulation of filter cutoff
+- Global resonant low-pass: 2-pole (12 dB/octave) state-variable filter
+- Cutoff and resonance controls; filter envelope and LFO modulation
+  (sweeps from 60 Hz up to 18 kHz)
 
 ### LFO System
 - Two independent LFOs
@@ -40,10 +41,10 @@ and hardware resources.
 - Modulation targets per LFO: pitch (vibrato), filter cutoff, amplitude (tremolo), Osc2 detune
 
 ### Effects
-- Delay (10–400ms) with time, feedback, and mix controls
-- 4 delay presets (Slapback, Short, Medium, Rhythmic) plus Off
-- 4-tap chorus
-- Effects are currently mono; true stereo is planned
+- Stereo output: each voice is panned by pitch (low notes left, high right)
+- Stereo delay (10–400ms) with time, feedback, and mix controls
+- 4 delay presets (Slapback, Short, Medium, Rhythmic) plus Off; ping-pong mode
+- Modulated stereo chorus
 
 ### Presets
 - 15 factory presets: Init/Default, Fat Bass, TB-303 Acid, Bell Chime, Synth Lead,
@@ -82,5 +83,6 @@ All three are built with the Arduino IDE.
 Hardware complete and verified. Firmware is playable and in active
 development. Phase 2 bug fixing is complete (tuning, CPU load, clicks,
 voice stealing, pitch bend, release tails, BLE MIDI parsing, volume lock);
-current work is sound improvements on the existing hardware: true stereo
-output, a modulated chorus, and a resonant filter.
+the freed processor time went into stereo output, a modulated chorus,
+ping-pong delay, and a resonant filter. Next: anti-aliased oscillators and
+exponential envelope curves.
