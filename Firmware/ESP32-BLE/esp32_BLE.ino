@@ -44,6 +44,7 @@ HardwareSerial STM32Serial(1);  // Use UART1
 static BLEClient* pClient = nullptr;
 static BLERemoteCharacteristic* pMidiCharacteristic = nullptr;
 static bool bleConnected = false;
+static volatile bool pendingAllNotesOff = false;  // set on disconnect, sent from loop()
 static bool bleScanning = false;
 static BLEAdvertisedDevice* targetDevice = nullptr;
 
@@ -80,6 +81,12 @@ void setup() {
 }
 
 void loop() {
+  // Keyboard disconnected: release all notes on the STM32 (CC 123)
+  if (pendingAllNotesOff) {
+    pendingAllNotesOff = false;
+    sendMidiCommand(0xB0, 123, 0);
+  }
+  
   // Handle scanning timeout and fallback to any keyboard
   if (bleScanning && !useAnyKeyboard && millis() - scanStartTime > PREFERRED_SCAN_TIME) {
     Serial.println("⏱️  Preferred keyboard not found after 10 seconds");
@@ -280,6 +287,7 @@ class MyClientCallback : public BLEClientCallbacks {
   void onDisconnect(BLEClient* pclient) {
     bleConnected = false;
     pMidiCharacteristic = nullptr;
+    pendingAllNotesOff = true;  // keys held at disconnect would never get a note-off
     Serial.println("✗ BLE Disconnected");
   }
 };
