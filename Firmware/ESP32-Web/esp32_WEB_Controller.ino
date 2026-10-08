@@ -1457,6 +1457,11 @@ const char HTML_CHUNK_3[] PROGMEM = R"rawliteral(="updateParam('lfo2filter', thi
           <input type="range" id="filter" min="0" max="127" value="64" oninput="updateParam('filter', this.value)">
           <div class="value-display" id="filter_val">5000 Hz</div>
         </div>
+        <div class="control">
+          <label>Resonance</label>
+          <input type="range" id="resonance" min="0" max="127" value="0" oninput="updateParam('resonance', this.value)">
+          <div class="value-display" id="resonance_val">0%</div>
+        </div>
       </div>
     </div>
 
@@ -1476,6 +1481,9 @@ const char HTML_CHUNK_3[] PROGMEM = R"rawliteral(="updateParam('lfo2filter', thi
           <button class="delay-preset-btn" id="dpreset2" onclick="setDelayPreset(2)">Short</button>
           <button class="delay-preset-btn" id="dpreset3" onclick="setDelayPreset(3)">Medium</button>
           <button class="delay-preset-btn" id="dpreset4" onclick="setDelayPreset(4)">Rhythmic</button>
+        </div>
+        <div class="button-group" style="margin-top: 10px;">
+          <button class="toggle-btn" id="pingpongbtn" onclick="togglePingPong()">Ping-Pong: OFF</button>
         </div>
       </div>
       <div class="control-group">
@@ -1857,6 +1865,10 @@ const char HTML_CHUNK_5[] PROGMEM = R"rawliteral(nvrelease':
           displayValue = Math.round((value / 127.0) * 100);
           endpoint = '/param?name=fenvamount&val=' + value;
           break;
+        case 'resonance':
+          displayValue = Math.round((value / 127.0) * 100);
+          endpoint = '/param?name=resonance&val=' + value;
+          break;
       }
       
       // Update number input
@@ -2233,6 +2245,15 @@ const char HTML_CHUNK_7[] PROGMEM = R"rawliteral(extContent = 'Filter Env: ON';
         btn.classList.remove('active');
       }
       fetch('/param?name=chorusenable&val=' + (chorusEnabled ? '1' : '0'));
+    }
+
+    let pingPongEnabled = false;
+    function togglePingPong() {
+      pingPongEnabled = !pingPongEnabled;
+      const btn = document.getElementById('pingpongbtn');
+      btn.textContent = pingPongEnabled ? 'Ping-Pong: ON' : 'Ping-Pong: OFF';
+      btn.classList.toggle('active', pingPongEnabled);
+      fetch('/param?name=pingpong&val=' + (pingPongEnabled ? '1' : '0'));
     }
 
     let portamentoEnabled = false;
@@ -2943,7 +2964,7 @@ void handleKeyboard() {
 }
 
 void handlePanic() {
-  sendCC(123, 0);
+  sendCC(120, 0);  // All Sound Off: immediate silence (CC 123 now releases gracefully)
   server.send(200, "text/plain", "OK");
 }
 
