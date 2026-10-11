@@ -16,7 +16,8 @@
  * - PA10 was the 5-pin DIN MIDI input; the DIN circuit must stay disconnected
  *
  * Wi-Fi:
- * - SSID: STM32_Synth   Password: synth2024   IP: 192.168.4.1
+ * - Access point at IP 192.168.4.1. Network name, password and the default
+ *   volume passcode are in secrets.h (not published - see secrets.example.h)
  *
  * UART protocol (one-way, 115200 baud, one command per line):
  * - PARAM,<name>,<value> | CC,<num>,<value> | NOTE,<note>,<velocity> | NOTEOFF,<note>
@@ -27,8 +28,23 @@
 #include <ESPmDNS.h>
 #include <Preferences.h>
 
-const char* ssid = "STM32_Synth";
-const char* password = "synth2024";
+// Private settings live in secrets.h, which is NOT uploaded to GitHub.
+// To use your own: copy secrets.example.h to secrets.h (same folder) and edit it.
+// Without secrets.h the sketch still builds, using the PUBLIC defaults from
+// secrets.example.h - with a warning at compile time and on the serial monitor.
+#if __has_include("secrets.h")
+#include "secrets.h"
+#define USING_DEFAULT_SECRETS 0
+#else
+#include "secrets.example.h"
+#define USING_DEFAULT_SECRETS 1
+#warning "secrets.h not found: using the PUBLIC default Wi-Fi password and passcode from secrets.example.h. Copy it to secrets.h and set your own."
+#endif
+static_assert(sizeof(WIFI_PASSWORD) - 1 >= 8, "WIFI_PASSWORD must be at least 8 characters (WPA2 requirement)");
+static_assert(sizeof(DEFAULT_VOLUME_PASSCODE) - 1 == 4, "DEFAULT_VOLUME_PASSCODE must be 4 digits");
+
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
 
 // UART Configuration
 #define UART_RX_PIN 16  // Not physically connected, but ESP32 needs a valid pin number
@@ -169,6 +185,12 @@ struct Preset {
   int ringMod;           // 0-127
   bool portamentoOn;     // on/off
   int portamentoTime;    // 0-127
+  // Added in Phase 2
+  int resonance;         // 0-127
+  int delayTime;         // 0-127 (10-400 ms)
+  int delayFeedback;     // 0-127
+  bool pingPong;         // ping-pong delay mode
+  int level;             // output level: 0-127, 64 = 100%, 127 = ~200% (+6 dB)
 };
 
 // Forward declarations for user preset functions
@@ -177,135 +199,47 @@ bool loadUserPreset(int slot, Preset& preset);
 bool isUserPresetUsed(int slot);
 String getUserPresetName(int slot);
 void getCurrentSettings(Preset& preset);
+void applyPreset(const Preset& p);
+String presetJson(const Preset& p, const String& name);
+// (Functions taking a Preset must be declared here, after the struct: the
+//  Arduino IDE puts its automatic prototypes above the struct otherwise.)
 
+// Times (attack, decay, release, filter envelope) use an exponential scale:
+// 0 = 1 ms, 64 = ~56 ms, 100 = ~545 ms, 127 = 3000 ms (time to fall 60 dB).
+// Retuned in Phase 2 for the exponential envelopes and resonant filter.
 const Preset presets[] = {
-  // Format: Name, Osc1Wave, Osc2Wave, Osc2Detune, Osc2Level, SubLevel, SubOctave, SubWave, NoiseLevel,
-  //         Attack, Decay, Sustain, Release, FilterCutoff,
-  //         FEnvEnabled, FEnvA, FEnvD, FEnvS, FEnvR, FEnvAmount,
-  //         LFO1Enabled, LFO1Rate, LFO1Wave, LFO1Pitch, LFO1Filter, LFO1Amp, LFO1Detune,
-  //         LFO2Enabled, LFO2Rate, LFO2Wave, LFO2Pitch, LFO2Filter, LFO2Amp, LFO2Detune,
-  //         DelayMix, ChorusMix, ChorusEnabled
-  
-    // 1. Init/Default - Clean slate
-  {"Init/Default", 1, 1, 9, 89, 0, 1, 0, 0,
-   2, 13, 89, 13, 64,
-   false, 2, 13, 64, 13, 64,
-   false, 41, 0, 0, 0, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   0, 0, false, 0, false, 0},
-  
-  // 2. Fat Bass - Sub oscillator showcase
-  {"Fat Bass", 1, 1, 6, 89, 89, 1, 0, 6,
-   1, 19, 76, 10, 40,
-   true, 1, 13, 25, 13, 76,
-   false, 41, 0, 0, 0, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   0, 0, false, 0, false, 0},
-  
-  // 3. TB-303 Acid - Filter envelope squelch
-  {"TB-303 Acid", 1, 1, 4, 89, 51, 1, 0, 0,
-   1, 19, 38, 13, 35,
-   true, 1, 25, 25, 13, 127,
-   true, 6, 1, 0, 38, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   0, 0, false, 0, false, 0},
-  
-  // 4. Bell Chime - Ring mod for metallic overtones
-  {"Bell Chime", 0, 3, 25, 89, 0, 1, 0, 0,
-   1, 81, 89, 31, 95,
-   false, 2, 13, 64, 13, 64,
-   false, 41, 0, 0, 0, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   32, 38, false, 38, false, 0},
-  
-  // 5. Synth Lead - Portamento for smooth glides
-  {"Synth Lead", 1, 1, 10, 89, 38, 1, 0, 0,
-   1, 13, 102, 19, 50,
-   false, 2, 13, 64, 13, 64,
-   true, 25, 3, 0, 102, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   0, 0, false, 0, true, 50},
-  
-  // 6. Analog Pad - Dual LFOs + chorus
-  {"Analog Pad", 1, 3, 19, 89, 25, 1, 0, 6,
-   38, 25, 114, 102, 55,
-   true, 51, 38, 89, 51, 64,
-   true, 4, 0, 0, 51, 19, 0,
-   true, 9, 1, 0, 0, 0, 38,
-   0, 45, true, 0, false, 0},
-  
-  // 7. Robot Voice - Ring mod for robotic tones
-  {"Robot Voice", 2, 2, 0, 76, 25, 1, 0, 13,
-   6, 19, 76, 13, 45,
-   true, 1, 25, 0, 13, 64,
-   true, 38, 2, 25, 25, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   0, 0, false, 51, false, 0},
-  
-  // 8. String Ensemble - Chorus + detune
-  {"String Ensemble", 1, 1, 15, 89, 19, 1, 0, 0,
-   25, 19, 108, 95, 70,
-   false, 2, 13, 64, 13, 64,
-   false, 41, 0, 0, 0, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   13, 45, true, 0, false, 0},
-  
-  // 9. Metallic Pad - Ring mod + chorus
-  {"Metallic Pad", 1, 3, 19, 76, 38, 1, 0, 6,
-   38, 38, 95, 89, 60,
-   true, 64, 51, 76, 64, 64,
-   false, 41, 0, 0, 0, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   0, 45, true, 25, false, 0},
-  
-  // 10. Pluck Bass - Fast decay + sub
-  {"Pluck Bass", 1, 3, 6, 89, 76, 1, 0, 0,
-   1, 15, 0, 6, 55,
-   true, 1, 10, 0, 6, 76,
-   false, 41, 0, 0, 0, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   0, 0, false, 0, false, 0},
-  
-  // 11. Wobble Bass - LFO → filter (slow rate)
-  {"Wobble Bass", 1, 2, 0, 89, 102, 2, 0, 0,
-   1, 6, 127, 13, 40,
-   false, 2, 13, 64, 13, 64,
-   true, 6, 2, 0, 114, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   0, 0, false, 0, false, 0},
-  
-  // 12. Sitar - Ring mod for eastern sound
-  {"Sitar", 1, 1, 12, 89, 38, 1, 0, 0,
-   1, 51, 25, 31, 65,
-   true, 1, 64, 0, 25, 76,
-   true, 76, 0, 19, 0, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   13, 0, false, 32, false, 0},
-  
-  // 13. Ambient Wash - Long attack + delay + chorus
-  {"Ambient Wash", 1, 2, 32, 89, 32, 1, 0, 13,
-   51, 38, 95, 121, 50,
-   true, 76, 51, 76, 64, 64,
-   true, 3, 0, 0, 38, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   25, 45, true, 0, false, 0},
-  
-  // 14. Glide Bass - Portamento bass
-  {"Glide Bass", 1, 1, 6, 89, 76, 1, 0, 6,
-   1, 19, 76, 10, 40,
-   true, 1, 13, 25, 13, 76,
-   false, 41, 0, 0, 0, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   0, 0, false, 0, true, 80},
-  
-  // 15. 808 Bass - Sub dominant + click
-  {"808 Bass", 0, 0, 0, 25, 114, 1, 0, 6,
-   1, 25, 0, 13, 45,
-   true, 1, 13, 0, 13, 64,
-   false, 41, 0, 0, 0, 0, 0,
-   false, 16, 0, 0, 0, 0, 0,
-   0, 0, false, 0, false, 0}
+  // 1. Init - neutral starting point: two slightly detuned saws
+  {"Init/Default", 1, 1, 9, 89, 0, 1, 0, 0, 26, 90, 89, 90, 61, false, 26, 90, 64, 90, 64, false, 41, 0, 0, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 0, false, 0, 0, 62, 40, false, 64},
+  // 2. Fat Bass - detuned saws + sub, low filter with a short envelope 'pluck'
+  {"Fat Bass", 1, 1, 6, 89, 89, 1, 0, 0, 17, 101, 76, 88, 15, true, 17, 90, 25, 88, 44, false, 41, 0, 0, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 0, false, 0, 19, 62, 40, false, 64},
+  // 3. TB-303 Acid - one saw, low cutoff, high resonance, snappy filter envelope
+  {"TB-303 Acid", 1, 1, 0, 0, 0, 1, 0, 0, 17, 90, 64, 70, 3, true, 0, 88, 0, 73, 76, false, 41, 0, 0, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 0, false, 0, 95, 62, 40, false, 77},
+  // 4. Bell Chime - sine + triangle, instant attack, long ringing decay, no sustain
+  {"Bell Chime", 0, 3, 4, 127, 0, 1, 0, 0, 0, 124, 0, 124, 99, false, 26, 90, 64, 90, 64, false, 41, 0, 0, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 25, 44, true, 25, false, 0, 0, 94, 40, true, 115},
+  // 5. Synth Lead - detuned saws, vibrato, short glide, a little resonance
+  {"Synth Lead", 1, 1, 13, 89, 32, 1, 0, 0, 26, 95, 102, 90, 48, true, 26, 95, 64, 90, 38, true, 34, 0, 32, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 25, 64, false, 0, true, 20, 32, 94, 40, true, 64},
+  // 6. Analog Pad - slow swell, gentle filter movement, drifting detune, chorus
+  {"Analog Pad", 1, 3, 19, 89, 25, 1, 0, 4, 101, 110, 108, 124, 29, true, 106, 116, 89, 121, 51, true, 4, 0, 0, 51, 19, 0, true, 9, 1, 0, 0, 0, 38, 19, 57, true, 0, false, 0, 25, 111, 47, true, 64},
+  // 7. Robot Voice - squares + ring mod, stepped (square-LFO) pitch warble
+  {"Robot Voice", 2, 2, 0, 76, 25, 1, 0, 13, 37, 90, 89, 79, 36, true, 26, 90, 0, 79, 51, true, 38, 2, 25, 25, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 51, false, 0, 64, 62, 40, false, 64},
+  // 8. String Ensemble - detuned saws, slow bow-like attack, light vibrato, chorus
+  {"String Ensemble", 1, 1, 15, 102, 0, 1, 0, 0, 90, 110, 108, 116, 55, false, 26, 90, 64, 90, 64, true, 31, 0, 13, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 19, 64, true, 0, false, 0, 0, 78, 33, false, 64},
+  // 9. Metallic Pad - ring-modulated pad with resonant filter sweep and chorus
+  {"Metallic Pad", 1, 3, 19, 76, 38, 1, 0, 6, 99, 112, 95, 124, 42, true, 106, 112, 76, 116, 64, false, 41, 0, 0, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 25, 57, true, 32, false, 0, 44, 94, 53, true, 64},
+  // 10. Pluck Bass - instant attack, decaying note, resonant filter 'pluck'
+  {"Pluck Bass", 1, 3, 6, 89, 76, 1, 0, 0, 0, 101, 0, 95, 8, true, 0, 88, 0, 84, 57, false, 41, 0, 0, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 0, false, 0, 38, 62, 40, false, 64},
+  // 11. Wobble Bass - smooth sine LFO sweeping a resonant low filter
+  {"Wobble Bass", 1, 2, 0, 89, 76, 1, 0, 0, 17, 90, 127, 84, 1, false, 26, 90, 64, 90, 64, true, 15, 0, 0, 102, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 0, false, 0, 70, 62, 40, false, 64},
+  // 12. Sitar - bright plucked attack, long decay, buzzy resonance + ring mod
+  {"Sitar", 1, 1, 11, 89, 25, 1, 0, 0, 0, 116, 0, 110, 36, true, 0, 106, 0, 90, 64, true, 76, 0, 0, 19, 0, 0, false, 16, 0, 0, 0, 0, 0, 19, 64, false, 32, false, 0, 57, 62, 40, false, 64},
+  // 13. Ambient Wash - very slow swell and fade, wide detune, long ping-pong echoes
+  {"Ambient Wash", 1, 2, 32, 89, 32, 1, 0, 13, 121, 121, 102, 127, 29, true, 124, 121, 76, 124, 51, true, 2, 0, 0, 38, 0, 0, false, 16, 0, 0, 0, 0, 0, 44, 64, true, 0, false, 0, 32, 127, 74, true, 64},
+  // 14. Glide Bass - Fat Bass with portamento between notes
+  {"Glide Bass", 1, 1, 6, 89, 76, 1, 0, 0, 17, 101, 76, 88, 15, true, 17, 90, 25, 88, 44, false, 41, 0, 0, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 0, true, 30, 19, 62, 40, false, 64},
+  // 15. 808 Bass - pure sine with a long booming decay (no pitch drop: not available)
+  {"808 Bass", 0, 0, 0, 0, 51, 1, 0, 0, 0, 124, 0, 116, 23, false, 26, 90, 64, 90, 64, false, 41, 0, 0, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 0, false, 0, 0, 62, 40, false, 96}
 };
+
 
 const int numPresets = 15;
 
@@ -357,6 +291,11 @@ void saveUserPreset(int slot, const Preset& preset) {
   preferences.putInt((prefix + "rng").c_str(), preset.ringMod);
   preferences.putBool((prefix + "poe").c_str(), preset.portamentoOn);
   preferences.putInt((prefix + "pot").c_str(), preset.portamentoTime);
+  preferences.putInt((prefix + "res").c_str(), preset.resonance);
+  preferences.putInt((prefix + "dlt").c_str(), preset.delayTime);
+  preferences.putInt((prefix + "dlf").c_str(), preset.delayFeedback);
+  preferences.putBool((prefix + "png").c_str(), preset.pingPong);
+  preferences.putInt((prefix + "lvl").c_str(), preset.level);
   
   // Save preset name (max 20 characters)
   String name = String(preset.name);
@@ -422,10 +361,18 @@ bool loadUserPreset(int slot, Preset& preset) {
   preset.ringMod = preferences.getInt((prefix + "rng").c_str(), 0);
   preset.portamentoOn = preferences.getBool((prefix + "poe").c_str(), false);
   preset.portamentoTime = preferences.getInt((prefix + "pot").c_str(), 0);
+  // Fields added in Phase 2 (older saved presets get these defaults)
+  preset.resonance = preferences.getInt((prefix + "res").c_str(), 0);
+  preset.delayTime = preferences.getInt((prefix + "dlt").c_str(), 62);
+  preset.delayFeedback = preferences.getInt((prefix + "dlf").c_str(), 40);
+  preset.pingPong = preferences.getBool((prefix + "png").c_str(), false);
+  preset.level = preferences.getInt((prefix + "lvl").c_str(), 64);
   
-  // Load preset name
-  String name = preferences.getString((prefix + "nam").c_str(), "User");
-  preset.name = name.c_str();
+  // Load preset name. Kept in a static String: the old code pointed the name
+  // at a local String that was destroyed when this function returned.
+  static String loadedName;
+  loadedName = preferences.getString((prefix + "nam").c_str(), "User");
+  preset.name = loadedName.c_str();
   
   preferences.end();
   return true;
@@ -1263,7 +1210,7 @@ const char HTML_CHUNK_1[] PROGMEM = R"rawliteral()" style="width: 60px; padding:
           <label>Attack (1-1000ms)</label>
           <div style="display: flex; gap: 10px; align-items: center;">
             <input type="range" id="attack" min="0" max="127" value="2" oninput="updateParam('attack', this.value)" style="flex: 1;">
-            <input type="number" id="attack_num" min="1" max="1000" step="1" value="16" onchange="updateParam('attack', this.value, true)" style="width: 65px; padding: 5px; border-radius: 4px; border: 2px solid #dee2e6; font-size: 0.85em;">
+            <input type="number" id="attack_num" min="1" max="3000" step="1" value="16" onchange="updateParam('attack', this.value, true)" style="width: 65px; padding: 5px; border-radius: 4px; border: 2px solid #dee2e6; font-size: 0.85em;">
           </div>
           <div class="value-display" id="attack_val">16 ms</div>
         </div>
@@ -1271,7 +1218,7 @@ const char HTML_CHUNK_1[] PROGMEM = R"rawliteral()" style="width: 60px; padding:
           <label>Decay (1-1000ms)</label>
           <div style="display: flex; gap: 10px; align-items: center;">
             <input type="range" id="decay" min="0" max="127" value="13" oninput="updateParam('decay', this.value)" style="flex: 1;">
-            <input type="number" id="decay_num" min="1" max="1000" step="1" value="103" onchange="updateParam('decay', this.value, true)" style="width: 65px; padding: 5px; border-radius: 4px; border: 2px solid #dee2e6; font-size: 0.85em;">
+            <input type="number" id="decay_num" min="1" max="3000" step="1" value="103" onchange="updateParam('decay', this.value, true)" style="width: 65px; padding: 5px; border-radius: 4px; border: 2px solid #dee2e6; font-size: 0.85em;">
           </div>
           <div class="value-display" id="decay_val">103 ms</div>
         </div>
@@ -1301,7 +1248,7 @@ const char HTML_CHUNK_2[] PROGMEM = R"rawliteral(d="release" min="0" max="127" v
           <label>Filter Attack (1-1000ms)</label>
           <div style="display: flex; gap: 10px; align-items: center;">
             <input type="range" id="fenvattack" min="0" max="127" value="2" oninput="updateParam('fenvattack', this.value)" style="flex: 1;">
-            <input type="number" id="fenvattack_num" min="1" max="1000" step="1" value="16" onchange="updateParam('fenvattack', this.value, true)" style="width: 65px; padding: 5px; border-radius: 4px; border: 2px solid #dee2e6; font-size: 0.85em;">
+            <input type="number" id="fenvattack_num" min="1" max="3000" step="1" value="16" onchange="updateParam('fenvattack', this.value, true)" style="width: 65px; padding: 5px; border-radius: 4px; border: 2px solid #dee2e6; font-size: 0.85em;">
           </div>
           <div class="value-display" id="fenvattack_val">16 ms</div>
         </div>
@@ -1309,7 +1256,7 @@ const char HTML_CHUNK_2[] PROGMEM = R"rawliteral(d="release" min="0" max="127" v
           <label>Filter Decay (1-1000ms)</label>
           <div style="display: flex; gap: 10px; align-items: center;">
             <input type="range" id="fenvdecay" min="0" max="127" value="13" oninput="updateParam('fenvdecay', this.value)" style="flex: 1;">
-            <input type="number" id="fenvdecay_num" min="1" max="1000" step="1" value="103" onchange="updateParam('fenvdecay', this.value, true)" style="width: 65px; padding: 5px; border-radius: 4px; border: 2px solid #dee2e6; font-size: 0.85em;">
+            <input type="number" id="fenvdecay_num" min="1" max="3000" step="1" value="103" onchange="updateParam('fenvdecay', this.value, true)" style="width: 65px; padding: 5px; border-radius: 4px; border: 2px solid #dee2e6; font-size: 0.85em;">
           </div>
           <div class="value-display" id="fenvdecay_val">103 ms</div>
         </div>
@@ -1583,6 +1530,22 @@ const char HTML_CHUNK_3[] PROGMEM = R"rawliteral(="updateParam('lfo2filter', thi
     </div>
 
     <div class="section">
+      <div class="section-title">🔊 Preset Level</div>
+      <div class="control">
+        <label>Level (balances this sound against the others; unlock the volume with the passcode to change it)</label>
+        <input type="range" id="level" min="0" max="127" value="64" disabled oninput="updateParam('level', this.value)">
+        <div class="value-display" id="level_val">100%</div>
+      </div>
+      <div style="display: flex; gap: 10px; margin-top: 10px;">
+        <button class="action-btn" id="saveFactoryLevelBtn" onclick="saveFactoryLevel()" disabled>💾 Save level for this factory preset</button>
+        <button class="action-btn" id="resetFactoryLevelBtn" onclick="resetFactoryLevel()" disabled>↺ Reset</button>
+      </div>
+      <p style="margin-top: 10px; font-size: 0.9em; color: #666;" id="factoryLevelNote">
+        Load a factory preset to save its level. User presets save their level with all other settings.
+      </p>
+    </div>
+
+    <div class="section">
       <div class="section-title">💾 Save Current Settings</div>
       <d)rawliteral";
 const char HTML_CHUNK_4[] PROGMEM = R"rawliteral(iv style="margin-bottom: 15px;">
@@ -1615,7 +1578,7 @@ const char HTML_CHUNK_4[] PROGMEM = R"rawliteral(iv style="margin-bottom: 15px;"
 
     <div class="info-box">
       <h3>ℹ️ Connection Info</h3>
-      <p><strong>WiFi:</strong> STM32_Synth | <strong>Password:</strong> synth2024</p>
+      <p><strong>WiFi:</strong> the synth's own network (name and password are set in secrets.h)</p>
       <p><strong>URL:</strong> http://192.168.4.1 | <strong>Status:</strong> <span style="color: #28a745; font-weight: bold;">● Connected</span></p>
     </div>
   </div>
@@ -1671,11 +1634,9 @@ const char HTML_CHUNK_4[] PROGMEM = R"rawliteral(iv style="margin-bottom: 15px;"
         case 'decay':
         case 'fenvattack':
         case 'fenvdecay':
-          return Math.round(((displayVal - 1) / 999.0) * 127);
-          
         case 'release':
         case 'fenvrelease':
-          return Math.round(((displayVal - 1) / 2999.0) * 127);
+          return envTimeToVal(displayVal);
 
         case 'delaytime':
           return Math.max(0, Math.round(((displayVal - 10) / 390.0) * 127));  // 10-400 ms
@@ -1700,11 +1661,19 @@ const char HTML_CHUNK_4[] PROGMEM = R"rawliteral(iv style="margin-bottom: 15px;"
     
     let updateTimers = {};  // Store timers for each parameter
     
-    function updateParam(param, value, fromNumberInput = false) {
+    // Envelope times use an exponential scale, as on most synths:
+    // slider 0 = 1 ms, 64 = ~56 ms, 100 = ~545 ms, 127 = 3000 ms
+    function envTimeMs(v) { return Math.round(Math.pow(3000, v / 127)); }
+    function envTimeToVal(ms) {
+      ms = Math.max(1, Math.min(3000, ms));
+      return Math.round(Math.log(ms) / Math.log(3000) * 127);
+    }
+
+    function updateParam(param, value, fromNumberInput = false, noSend = false) {
       if (updating) return;
       updating = true;
       
-      clearPresetHighlight();
+      if (!noSend) clearPresetHighlight();
       
       // If from number input with friendly values, convert to 0-127
       if (fromNumberInput) {
@@ -1795,12 +1764,12 @@ const char HTML_CHUNK_4[] PROGMEM = R"rawliteral(iv style="margin-bottom: 15px;"
           break;
         case 'attack':
         case 'fenvattack':
-          displayValue = Math.round(1 + (value / 127.0) * 999);
+          displayValue = envTimeMs(value);
           endpoint = '/param?name=' + param + '&val=' + value;
           break;
         case 'decay':
         case 'fenvdecay':
-          displayValue = Math.round(1 + (value / 127.0) * 999);
+          displayValue = envTimeMs(value);
           endpoint = '/param?name=' + param + '&val=' + value;
           break;
         case 'sustain':
@@ -1810,7 +1779,7 @@ const char HTML_CHUNK_4[] PROGMEM = R"rawliteral(iv style="margin-bottom: 15px;"
         case 'release':
         case 'fe)rawliteral";
 const char HTML_CHUNK_5[] PROGMEM = R"rawliteral(nvrelease':
-          displayValue = Math.round(1 + (value / 127.0) * 2999);
+          displayValue = envTimeMs(value);
           endpoint = '/param?name=' + param + '&val=' + value;
           break;
         case 'filter':
@@ -1846,11 +1815,11 @@ const char HTML_CHUNK_5[] PROGMEM = R"rawliteral(nvrelease':
           endpoint = '/param?name=portatime&val=' + value;
           break;
         case 'fenvattack':
-          displayValue = Math.round(1 + (value / 127.0) * 999);
+          displayValue = envTimeMs(value);
           endpoint = '/param?name=fenvattack&val=' + value;
           break;
         case 'fenvdecay':
-          displayValue = Math.round(1 + (value / 127.0) * 999);
+          displayValue = envTimeMs(value);
           endpoint = '/param?name=fenvdecay&val=' + value;
           break;
         case 'fenvsustain':
@@ -1858,7 +1827,7 @@ const char HTML_CHUNK_5[] PROGMEM = R"rawliteral(nvrelease':
           endpoint = '/param?name=fenvsustain&val=' + value;
           break;
         case 'fenvrelease':
-          displayValue = Math.round(1 + (value / 127.0) * 2999);
+          displayValue = envTimeMs(value);
           endpoint = '/param?name=fenvrelease&val=' + value;
           break;
         case 'fenvamount':
@@ -1868,6 +1837,10 @@ const char HTML_CHUNK_5[] PROGMEM = R"rawliteral(nvrelease':
         case 'resonance':
           displayValue = Math.round((value / 127.0) * 100);
           endpoint = '/param?name=resonance&val=' + value;
+          break;
+        case 'level':
+          displayValue = Math.round((value / 64.0) * 100);   // 64 = 100%
+          endpoint = '/param?name=level&val=' + value;
           break;
       }
       
@@ -1897,12 +1870,14 @@ const char HTML_CHUNK_5[] PROGMEM = R"rawliteral(nvrelease':
         clearTimeout(updateTimers[param]);
       }
       
-      updateTimers[param] = setTimeout(() => {
-        fetch(endpoint).then(r => {
-          if (r.status === 403 && param === 'volume') relockVolumeUI();  // server lock timed out
-        });
-        delete updateTimers[param];
-      }, 50);  // 50ms debounce
+      if (!noSend) {
+        updateTimers[param] = setTimeout(() => {
+          fetch(endpoint).then(r => {
+            if (r.status === 403 && (param === 'volume' || param === 'level')) relockVolumeUI();  // server lock timed out
+          });
+          delete updateTimers[param];
+        }, 50);  // 50ms debounce
+      }
       
       updating = false;
     }
@@ -1924,197 +1899,93 @@ const char HTML_CHUNK_5[] PROGMEM = R"rawliteral(nvrelease':
       }
     }
 
+    // ---- Applying a complete state (preset, user preset, page load) ----
+    // Updates every control on the page WITHOUT sending anything: the ESP32
+    // has already applied these settings to the synth. (Presets used to update
+    // only some controls, so filter-envelope and LFO sliders could show stale
+    // values, and ring mod / portamento from factory presets were never applied.)
+    const SLIDER_PARAMS = ['osc2detune','osc2level','sublevel','noise','attack','decay','sustain','release',
+      'filter','resonance','fenvattack','fenvdecay','fenvsustain','fenvrelease','fenvamount',
+      'lforate','lfopitch','lfofilter','lfoamp','lfodetune','lfo2rate','lfo2pitch','lfo2filter','lfo2amp','lfo2detune',
+      'delaytime','delayfb','delaymix','chorusmix','ringmod','portatime','level'];
+    const SELECT_PARAMS = ['osc1wave','osc2wave','suboctave','subwave','lfowave','lfo2wave'];
+
+    function setToggle(id, on, label) {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.textContent = label + (on ? ': ON' : ': OFF');
+      btn.classList.toggle('active', on);
+    }
+
+    function applyState(s) {
+      SLIDER_PARAMS.forEach(p => { if (s[p] !== undefined) updateParam(p, s[p], false, true); });
+      SELECT_PARAMS.forEach(p => {
+        const el = document.getElementById(p);
+        if (el && s[p] !== undefined) el.value = s[p];
+      });
+      osc1wave = s.osc1wave;
+      osc2wave = s.osc2wave;
+      filterEnvEnabled  = !!s.fenvenable;   setToggle('fenvbtn', filterEnvEnabled, 'Filter Env');
+      lfo1Enabled       = !!s.lfoenable;    setToggle('lfobtn', lfo1Enabled, 'LFO1');
+      lfo2Enabled       = !!s.lfo2enable;   setToggle('lfo2btn', lfo2Enabled, 'LFO2');
+      chorusEnabled     = !!s.chorusenable; setToggle('chorusbtn', chorusEnabled, 'Chorus');
+      portamentoEnabled = !!s.portamento;   setToggle('portabtn', portamentoEnabled, 'Portamento');
+      pingPongEnabled   = !!s.pingpong;     setToggle('pingpongbtn', pingPongEnabled, 'Ping-Pong');
+      for (let i = 0; i < 5; i++) {
+        const b = document.getElementById('dpreset' + i);
+        if (b) b.classList.remove('active');
+      }
+    }
+
+    // Preset Level can make the synth louder, so like the volume ceiling it
+    // can only be changed while the volume is unlocked with the passcode
+    function setLevelControlsEnabled(on) {
+      document.getElementById('level').disabled = !on;
+      document.getElementById('saveFactoryLevelBtn').disabled = !on || levelFactoryPreset < 0;
+      document.getElementById('resetFactoryLevelBtn').disabled = !on || levelFactoryPreset < 0;
+    }
+
+    // Factory preset whose level can be saved (-1 = none loaded)
+    let levelFactoryPreset = -1;
+    function setFactoryLevelTarget(num, name) {
+      levelFactoryPreset = num;
+      setLevelControlsEnabled(volumeUnlocked);
+      document.getElementById('factoryLevelNote').textContent = (num < 0)
+        ? 'Load a factory preset to save its level. User presets save their level with all other settings.'
+        : 'Level for factory preset "' + name + '"';
+    }
+
+    function saveFactoryLevel() {
+      if (levelFactoryPreset < 0) return;
+      const val = document.getElementById('level').value;
+      fetch('/savefactorylevel?num=' + levelFactoryPreset + '&val=' + val)
+        .then(r => r.text()).then(msg => alert('🔊 ' + msg));
+    }
+
+    function resetFactoryLevel() {
+      if (levelFactoryPreset < 0) return;
+      fetch('/resetfactorylevel?num=' + levelFactoryPreset)
+        .then(r => r.text()).then(v => updateParam('level', parseInt(v), false, true));
+    }
+
     function loadPreset(num) {
-      fetch('/preset?num=' + num).then(r => r.json()).then(preset => {
-        // Update oscillator waveforms
-        osc1wave = preset.osc1;
-        osc2wave = preset.osc2;
-        document.getElementById('osc1wave').value = osc1wave;
-        document.getElementById('osc2wave').value = osc2wave;
-        
-        // Update oscillator parameters
-        updateParam('osc2detune', preset.osc2Detune);
-        updateParam('osc2level', preset.osc2Level);
-        
-        // Update sub oscillator
-        updateParam('sublevel', preset.subLevel);
-        updateParam('suboctave', preset.subOctave);
-        updateParam('subwave', preset.subWave);
-        
-        // Update noise
-        updateParam('noise', preset.noiseLevel);
-        
-        // Update ADSR
-        updateParam('attack', preset.attack);
-        updateParam('decay', preset.decay);
-        updateParam('sustain', preset.sustain);
-        updateParam('release', preset.release);
-        
-        // Update filter
-        updateParam('filter', preset.filterCutoff);
-        
-        // Update filter envelope state
-        filterEnvEnabled = preset.filterEnvEnabled;
-        const fenvBtn = document.getElementById('fenvbtn');
-        if (filterEnvEnabled) {
-          fenvBtn.textContent = 'Filter Env: ON';
-          fenvBtn.classList.add('active');
-        } else {
-          fenvBtn.textContent = 'Filter Env: OFF';
-          fenvBtn.classList.remove('active');
-        }
-        
-        // Update LFO1 state
-        lfo1Enabled = preset.lfo1Enabled;
-        const lfo1Btn = document.getElementById('lfobtn');
-        if (lfo1Enabled) {
-          lfo1Btn.textContent = 'LFO1: ON';
-          lfo1Btn.classList.add('active');
-        } else {
-          lfo1Btn.textContent = 'LFO1: OFF';
-          lfo1Btn.classList.remove('active');
-        }
-        
-        // Update LFO2 state
-        lfo2Enabled = preset.lfo2Enabled;
-        const lfo2Btn = document.getElementById('lfo2btn');
-        if (lfo2Enabled) {
-          lfo2Btn.textContent = 'LFO2: ON';
-          lfo2Btn.classList.add('active');
-        } else {
-          lfo2Btn.textContent = 'LFO2: OFF';
-          lfo2Btn.classList.remove('active');
-        }
-        
-        // Update chorus state
-        chorusEnabled = preset.chorusEnabled;
-        const chorusBtn = document.getElementById('chorusbtn');
-        if (chorusEnabled) {
-          chorusBtn.textContent = 'Chorus: ON';
-          chorusBtn.classList.add('active');
-        } else {
-          chorusBtn.textContent = 'Chorus: OFF';
-          chorusBtn.classList.remove('active');
-        }
-        
-        // Update effects
-        updateParam('delaymix', preset.delayMix);
-        updateParam('chorusmix', preset.chorusMix);
-        
-        // Update ring mod (always reset to preset value, default 0)
-        updateParam('ringmod', preset.ringMod || 0);
-        
-        // Update portamento
-        portamentoEnabled = preset.portamentoOn || false;
-        const portaBtn = document.getElementById('portabtn');
-        if (portamentoEnabled) {
-          portaBtn.textContent = 'Portamento: ON';
-          portaBtn.classList.add('active');
-        } else {
-          portaBtn.textContent = 'Portamento: OFF';
-          portaBtn.classList.remove('active');
-        }
-        fetch('/param?name=portamento&val=' + (portamentoEnabled ? '1' : '0'));
-        updateParam('portatime', preset.portamentoTime || 0);
-        
-        // Highlight the active preset
+      fetch('/preset?num=' + num).then(r => r.json()).then(s => {
+        applyState(s);
         highlightPreset(num);
+        setFactoryLevelTarget(num, s.name);
       });
     }
 
     function loadUserPreset(slot) {
       fetch('/loaduser?slot=' + slot).then(r => {
-        if (r.ok) {
-          return r.json();
-        } else {
-          console.log('Preset slot empty');
-          throw new Error('Empty slot');
-        }
-      }).then(preset => {
-        // Same loading logic as factory presets
-        osc1wave = preset.osc1;
-        osc2wave = preset.osc2;
-        document.getElementById('osc1wave').value = osc1wave;
-        document.getElementById('osc2wave').value = osc2wave;
-    )rawliteral";
-const char HTML_CHUNK_6[] PROGMEM = R"rawliteral(    
-        updateParam('osc2detune', preset.osc2Detune);
-        updateParam('osc2level', preset.osc2Level);
-        updateParam('sublevel', preset.subLevel);
-        updateParam('suboctave', preset.subOctave);
-        updateParam('subwave', preset.subWave);
-        updateParam('noise', preset.noiseLevel);
-        updateParam('attack', preset.attack);
-        updateParam('decay', preset.decay);
-        updateParam('sustain', preset.sustain);
-        updateParam('release', preset.release);
-        updateParam('filter', preset.filterCutoff);
-        
-        filterEnvEnabled = preset.filterEnvEnabled;
-        const fenvBtn = document.getElementById('fenvbtn');
-        if (filterEnvEnabled) {
-          fenvBtn.textContent = 'Filter Env: ON';
-          fenvBtn.classList.add('active');
-        } else {
-          fenvBtn.textContent = 'Filter Env: OFF';
-          fenvBtn.classList.remove('active');
-        }
-        
-        lfo1Enabled = preset.lfo1Enabled;
-        const lfo1Btn = document.getElementById('lfobtn');
-        if (lfo1Enabled) {
-          lfo1Btn.textContent = 'LFO1: ON';
-          lfo1Btn.classList.add('active');
-        } else {
-          lfo1Btn.textContent = 'LFO1: OFF';
-          lfo1Btn.classList.remove('active');
-        }
-        
-        lfo2Enabled = preset.lfo2Enabled;
-        const lfo2Btn = document.getElementById('lfo2btn');
-        if (lfo2Enabled) {
-          lfo2Btn.textContent = 'LFO2: ON';
-          lfo2Btn.classList.add('active');
-        } else {
-          lfo2Btn.textContent = 'LFO2: OFF';
-          lfo2Btn.classList.remove('active');
-        }
-        
-        chorusEnabled = preset.chorusEnabled;
-        const chorusBtn = document.getElementById('chorusbtn');
-        if (chorusEnabled) {
-          chorusBtn.textContent = 'Chorus: ON';
-          chorusBtn.classList.add('active');
-        } else {
-          chorusBtn.textContent = 'Chorus: OFF';
-          chorusBtn.classList.remove('active');
-        }
-        
-        updateParam('delaymix', preset.delayMix);
-        updateParam('chorusmix', preset.chorusMix);
-        
-        // Update ring mod (always reset to preset value, default 0)
-        updateParam('ringmod', preset.ringMod || 0);
-        
-        // Update portamento
-        portamentoEnabled = preset.portamentoOn || false;
-        const portaBtn2 = document.getElementById('portabtn');
-        if (portamentoEnabled) {
-          portaBtn2.textContent = 'Portamento: ON';
-          portaBtn2.classList.add('active');
-        } else {
-          portaBtn2.textContent = 'Portamento: OFF';
-          portaBtn2.classList.remove('active');
-        }
-        fetch('/param?name=portamento&val=' + (portamentoEnabled ? '1' : '0'));
-        updateParam('portatime', preset.portamentoTime || 0);
-        
-        // Preset loaded silently
-      }).catch(err => {
-        console.error('Error loading user preset:', err);
-      });
+        if (!r.ok) throw new Error('Empty slot');
+        return r.json();
+      }).then(s => { applyState(s); setFactoryLevelTarget(-1, ''); })
+        .catch(() => console.log('Preset slot empty'));
     }
 
+)rawliteral";
+const char HTML_CHUNK_6[] PROGMEM = R"rawliteral(
     function saveCurrentPreset() {
       const slot = document.getElementById('saveSlot').value;
       const presetName = document.getElementById('presetName').value.trim();
@@ -2163,6 +2034,11 @@ const char HTML_CHUNK_6[] PROGMEM = R"rawliteral(
       params.append('ringMod', document.getElementById('ringmod').value);
       params.append('portamentoOn', portamentoEnabled);
       params.append('portamentoTime', document.getElementById('portatime').value);
+      params.append('resonance', document.getElementById('resonance').value);
+      params.append('delayTime', document.getElementById('delaytime').value);
+      params.append('delayFeedback', document.getElementById('delayfb').value);
+      params.append('pingPong', pingPongEnabled);
+      params.append('level', document.getElementById('level').value);
       
       fetch('/saveuser', {
         method: 'POST',
@@ -2354,7 +2230,7 @@ const char HTML_CHUNK_7[] PROGMEM = R"rawliteral(extContent = 'Filter Env: ON';
         }).then(savedVol => {
           volumeUnlocked = true;
           lastVolumeActivity = Date.now();
-          document.getElementById('volume').disabled = false;
+          document.getElementById('volume').disabled = false; setLevelControlsEnabled(true);
           document.getElementById('volumeLockBtn').textContent = '🔓 Unlocked';
           document.getElementById('volumeLockBtn').style.background = '#51cf66';
           document.getElementById('volumeLockBtn').onclick = null;
@@ -2374,10 +2250,22 @@ const char HTML_CHUNK_7[] PROGMEM = R"rawliteral(extContent = 'Filter Env: ON';
       }
     }
     
+    // Show the saved volume ceiling when the page opens (the slider used to
+    // start at its HTML default of 70% whatever was saved)
+    window.addEventListener('load', () => {
+      fetch('/getvolume').then(r => r.text()).then(v => {
+        const vol = parseInt(v);
+        if (!isNaN(vol)) {
+          document.getElementById('volume').value = vol;
+          document.getElementById('volume_val').textContent = Math.round((vol / 127) * 100) + '%';
+        }
+      });
+    });
+    
     // Called when the server refuses a volume change (unlock timed out)
     function relockVolumeUI() {
       volumeUnlocked = false;
-      document.getElementById('volume').disabled = true;
+      document.getElementById('volume').disabled = true; setLevelControlsEnabled(false);
       document.getElementById('volumeLockBtn').textContent = '🔒 Locked';
       document.getElementById('volumeLockBtn').style.background = '#ff6b6b';
       document.getElementById('volumeLockBtn').onclick = promptVolumePass;
@@ -2394,7 +2282,7 @@ const char HTML_CHUNK_7[] PROGMEM = R"rawliteral(extContent = 'Filter Env: ON';
         }
         if (r.ok) {
           volumeUnlocked = false;
-          document.getElementById('volume').disabled = true;
+          document.getElementById('volume').disabled = true; setLevelControlsEnabled(false);
           document.getElementById('volumeLockBtn').textContent = '🔒 Locked';
           document.getElementById('volumeLockBtn').style.background = '#ff6b6b';
           document.getElementById('volumeLockBtn').onclick = promptVolumePass;
@@ -2455,63 +2343,14 @@ const char HTML_CHUNK_7[] PROGMEM = R"rawliteral(extContent = 'Filter Env: ON';
 
     // Initialize parameters sequentially with delays to prevent buffer overflow
     window.onload = function() {
-      const params = [
-        ['osc2detune', 10],
-        ['osc2level', 89],
-        ['sublevel', 0],
-        ['suboctave', 1],
-        ['subwave', 0],
-        ['noise', 0],
-        ['attack', 2],
-        ['decay', 13],
-        ['sustain', 89],
-        ['release', 13],
-        ['filter', 64],
-        ['delaytime', 0],
-        ['delayfb', 0],
-        ['delaymix', 0],
-        ['chorusmix', 76],
-        ['lforate', 41],
-        ['lfopitch', 0],
-        ['lfofilter', 0],
-        ['lfoamp', 0],
-        ['lfodetune', 0],
-        ['lfo2rate', 16],
-        ['lfo2pitch', 0],
-        ['lfo2filter', 0],
-        ['lfo2amp', 0],
-        ['lfo2detune', 0],
-        ['fenvattack', 2],
-        ['fenvdecay', 13],
-        ['fenvsustain', 64],
-        ['fenvrelease', 13],
-        ['fenvamount', 64],
-        ['ringmod', 0],
-        ['portatime', 0]
-      ];
-      
-      // Reset portamento toggle
-      portamentoEnabled = false;
-      const portaBtn = document.getElementById('portabtn');
-      if (portaBtn) { portaBtn.textContent = 'Portamento: OFF'; portaBtn.classList.remove('a)rawliteral";
-const char HTML_CHUNK_8[] PROGMEM = R"rawliteral(ctive'); }
-      fetch('/param?name=portamento&val=0');
-      
-      let index = 0;
-      function sendNext() {
-        if (index < params.length) {
-          updateParam(params[index][0], params[index][1]);
-          index++;
-          setTimeout(sendNext, 30);  // 30ms delay between each parameter
-        } else {
-          // After initialization, check which user preset slots are used
-          checkUserPresets();
-        }
-      }
-      
-      sendNext();
+      // Show the synth's current settings. (The page used to send default
+      // values for everything on every load, changing the sound mid-play.)
+      fetch('/state').then(r => r.json()).then(st => applyState(st))
+        .finally(() => checkUserPresets());
     };
 
+)rawliteral";
+const char HTML_CHUNK_8[] PROGMEM = R"rawliteral(
     // Check which user preset slots are used and get their names
     function checkUserPresets() {
       for (let i = 0; i < 12; i++) {
@@ -2581,6 +2420,7 @@ void handleCC() {
       volumeUnlockedAt = millis();       // still adjusting: extend the unlock
     }
     sendCC(cc, val);
+    trackCC(cc, val);
     server.send(200, "text/plain", "OK");
   } else {
     server.send(400, "text/plain", "Missing parameters");
@@ -2591,7 +2431,12 @@ void handleParam() {
   if (server.hasArg("name") && server.hasArg("val")) {
     String param = server.arg("name");
     int val = server.arg("val").toInt();
+    if (param == "level" && !isVolumeUnlocked()) {   // level can raise loudness
+      server.send(403, "text/plain", "Volume locked");
+      return;
+    }
     sendParam(param, val);
+    trackParam(param, val);
     server.send(200, "text/plain", "OK");
   } else {
     server.send(400, "text/plain", "Missing parameters");
@@ -2612,115 +2457,217 @@ void handleWaveform() {
   }
 }
 
+// ---- Current synth state ----
+// The web controller keeps a copy of every setting it has sent, so the page
+// can show the real state when it is opened or reloaded (it used to reset
+// the synth to defaults on every page load).
+Preset current;
+bool currentIsFactory = true;
+
+// Sends every parameter of a preset to the STM32 and makes it the current state
+void applyPreset(const Preset& p) {
+  sendParam("osc1wave", p.osc1Wave); delay(15);
+  sendParam("osc2wave", p.osc2Wave); delay(15);
+  sendParam("osc2detune", p.osc2Detune); delay(15);
+  sendParam("osc2level", p.osc2Level); delay(15);
+  sendParam("sublevel", p.subLevel); delay(15);
+  sendParam("suboctave", p.subOctave); delay(15);
+  sendParam("subwave", p.subWave); delay(15);
+  sendParam("noise", p.noiseLevel); delay(15);
+  sendParam("attack", p.attack); delay(15);
+  sendParam("decay", p.decay); delay(15);
+  sendParam("sustain", p.sustain); delay(15);
+  sendParam("release", p.release); delay(15);
+  sendCC(1, p.filterCutoff); delay(15);
+  sendParam("resonance", p.resonance); delay(15);
+  sendParam("fenvattack", p.filterEnvAttack); delay(15);
+  sendParam("fenvdecay", p.filterEnvDecay); delay(15);
+  sendParam("fenvsustain", p.filterEnvSustain); delay(15);
+  sendParam("fenvrelease", p.filterEnvRelease); delay(15);
+  sendParam("fenvamount", p.filterEnvAmount); delay(15);
+  sendParam("fenvenable", p.filterEnvEnabled ? 1 : 0); delay(15);
+  sendParam("lforate", p.lfo1Rate); delay(15);
+  sendParam("lfowave", p.lfo1Wave); delay(15);
+  sendParam("lfopitch", p.lfo1Pitch); delay(15);
+  sendParam("lfofilter", p.lfo1Filter); delay(15);
+  sendParam("lfoamp", p.lfo1Amp); delay(15);
+  sendParam("lfodetune", p.lfo1Detune); delay(15);
+  sendParam("lfoenable", p.lfo1Enabled ? 1 : 0); delay(15);
+  sendParam("lfo2rate", p.lfo2Rate); delay(15);
+  sendParam("lfo2wave", p.lfo2Wave); delay(15);
+  sendParam("lfo2pitch", p.lfo2Pitch); delay(15);
+  sendParam("lfo2filter", p.lfo2Filter); delay(15);
+  sendParam("lfo2amp", p.lfo2Amp); delay(15);
+  sendParam("lfo2detune", p.lfo2Detune); delay(15);
+  sendParam("lfo2enable", p.lfo2Enabled ? 1 : 0); delay(15);
+  sendCC(12, p.delayTime); delay(15);
+  sendCC(13, p.delayFeedback); delay(15);
+  sendCC(91, p.delayMix); delay(15);
+  sendParam("pingpong", p.pingPong ? 1 : 0); delay(15);
+  sendCC(93, p.chorusMix); delay(15);
+  sendParam("chorusenable", p.chorusEnabled ? 1 : 0); delay(15);
+  chorusEnabled = p.chorusEnabled;
+  sendParam("ringmod", p.ringMod); delay(15);
+  sendParam("portatime", p.portamentoTime); delay(15);
+  sendParam("portamento", p.portamentoOn ? 1 : 0); delay(15);
+  sendParam("level", p.level); delay(15);
+  current = p;
+}
+
+// All settings as JSON; keys are the web page's control ids
+String presetJson(const Preset& p, const String& name) {
+  String j = "{";
+  j += "\"name\":\"" + name + "\"";
+  j += ",\"osc1wave\":" + String(p.osc1Wave);
+  j += ",\"osc2wave\":" + String(p.osc2Wave);
+  j += ",\"osc2detune\":" + String(p.osc2Detune);
+  j += ",\"osc2level\":" + String(p.osc2Level);
+  j += ",\"sublevel\":" + String(p.subLevel);
+  j += ",\"suboctave\":" + String(p.subOctave);
+  j += ",\"subwave\":" + String(p.subWave);
+  j += ",\"noise\":" + String(p.noiseLevel);
+  j += ",\"attack\":" + String(p.attack);
+  j += ",\"decay\":" + String(p.decay);
+  j += ",\"sustain\":" + String(p.sustain);
+  j += ",\"release\":" + String(p.release);
+  j += ",\"filter\":" + String(p.filterCutoff);
+  j += ",\"resonance\":" + String(p.resonance);
+  j += ",\"fenvenable\":" + String(p.filterEnvEnabled ? 1 : 0);
+  j += ",\"fenvattack\":" + String(p.filterEnvAttack);
+  j += ",\"fenvdecay\":" + String(p.filterEnvDecay);
+  j += ",\"fenvsustain\":" + String(p.filterEnvSustain);
+  j += ",\"fenvrelease\":" + String(p.filterEnvRelease);
+  j += ",\"fenvamount\":" + String(p.filterEnvAmount);
+  j += ",\"lfoenable\":" + String(p.lfo1Enabled ? 1 : 0);
+  j += ",\"lforate\":" + String(p.lfo1Rate);
+  j += ",\"lfowave\":" + String(p.lfo1Wave);
+  j += ",\"lfopitch\":" + String(p.lfo1Pitch);
+  j += ",\"lfofilter\":" + String(p.lfo1Filter);
+  j += ",\"lfoamp\":" + String(p.lfo1Amp);
+  j += ",\"lfodetune\":" + String(p.lfo1Detune);
+  j += ",\"lfo2enable\":" + String(p.lfo2Enabled ? 1 : 0);
+  j += ",\"lfo2rate\":" + String(p.lfo2Rate);
+  j += ",\"lfo2wave\":" + String(p.lfo2Wave);
+  j += ",\"lfo2pitch\":" + String(p.lfo2Pitch);
+  j += ",\"lfo2filter\":" + String(p.lfo2Filter);
+  j += ",\"lfo2amp\":" + String(p.lfo2Amp);
+  j += ",\"lfo2detune\":" + String(p.lfo2Detune);
+  j += ",\"delaytime\":" + String(p.delayTime);
+  j += ",\"delayfb\":" + String(p.delayFeedback);
+  j += ",\"delaymix\":" + String(p.delayMix);
+  j += ",\"pingpong\":" + String(p.pingPong ? 1 : 0);
+  j += ",\"chorusmix\":" + String(p.chorusMix);
+  j += ",\"chorusenable\":" + String(p.chorusEnabled ? 1 : 0);
+  j += ",\"ringmod\":" + String(p.ringMod);
+  j += ",\"portamento\":" + String(p.portamentoOn ? 1 : 0);
+  j += ",\"portatime\":" + String(p.portamentoTime);
+  j += ",\"level\":" + String(p.level);
+  j += "}";
+  return j;
+}
+
+// Keeps 'current' in step with individual changes made on the page
+void trackParam(const String& n, int v) {
+  if      (n == "osc1wave")    current.osc1Wave = v;
+  else if (n == "osc2wave")    current.osc2Wave = v;
+  else if (n == "osc2detune")  current.osc2Detune = v;
+  else if (n == "osc2level")   current.osc2Level = v;
+  else if (n == "sublevel")    current.subLevel = v;
+  else if (n == "suboctave")   current.subOctave = v;
+  else if (n == "subwave")     current.subWave = v;
+  else if (n == "noise")       current.noiseLevel = v;
+  else if (n == "attack")      current.attack = v;
+  else if (n == "decay")       current.decay = v;
+  else if (n == "sustain")     current.sustain = v;
+  else if (n == "release")     current.release = v;
+  else if (n == "resonance")   current.resonance = v;
+  else if (n == "fenvenable")  current.filterEnvEnabled = (v > 0);
+  else if (n == "fenvattack")  current.filterEnvAttack = v;
+  else if (n == "fenvdecay")   current.filterEnvDecay = v;
+  else if (n == "fenvsustain") current.filterEnvSustain = v;
+  else if (n == "fenvrelease") current.filterEnvRelease = v;
+  else if (n == "fenvamount")  current.filterEnvAmount = v;
+  else if (n == "lfoenable")   current.lfo1Enabled = (v > 0);
+  else if (n == "lforate")     current.lfo1Rate = v;
+  else if (n == "lfowave")     current.lfo1Wave = v;
+  else if (n == "lfopitch")    current.lfo1Pitch = v;
+  else if (n == "lfofilter")   current.lfo1Filter = v;
+  else if (n == "lfoamp")      current.lfo1Amp = v;
+  else if (n == "lfodetune")   current.lfo1Detune = v;
+  else if (n == "lfo2enable")  current.lfo2Enabled = (v > 0);
+  else if (n == "lfo2rate")    current.lfo2Rate = v;
+  else if (n == "lfo2wave")    current.lfo2Wave = v;
+  else if (n == "lfo2pitch")   current.lfo2Pitch = v;
+  else if (n == "lfo2filter")  current.lfo2Filter = v;
+  else if (n == "lfo2amp")     current.lfo2Amp = v;
+  else if (n == "lfo2detune")  current.lfo2Detune = v;
+  else if (n == "pingpong")    current.pingPong = (v > 0);
+  else if (n == "chorusenable") { current.chorusEnabled = (v > 0); chorusEnabled = current.chorusEnabled; }
+  else if (n == "ringmod")     current.ringMod = v;
+  else if (n == "portamento")  current.portamentoOn = (v > 0);
+  else if (n == "portatime")   current.portamentoTime = v;
+  else if (n == "level")       current.level = v;
+}
+
+void trackCC(int cc, int v) {
+  if      (cc == 1)  current.filterCutoff = v;
+  else if (cc == 12) current.delayTime = v;
+  else if (cc == 13) current.delayFeedback = v;
+  else if (cc == 91) current.delayMix = v;
+  else if (cc == 93) current.chorusMix = v;
+}
+
+void handleState() {
+  server.send(200, "application/json", presetJson(current, "Current"));
+}
+
+// ---- Factory preset levels ----
+// Factory presets live in program flash and can't be edited from the page,
+// but their level can: a level saved from the page is stored in the settings
+// storage ("fl<n>") and overrides the level in the table above.
+int factoryLevel(int num) {
+  preferences.begin("synth", true);
+  int lv = preferences.getInt(("fl" + String(num)).c_str(), presets[num].level);
+  preferences.end();
+  return lv;
+}
+
+void handleSaveFactoryLevel() {
+  if (!isVolumeUnlocked()) { server.send(403, "text/plain", "Volume locked"); return; }
+  if (!server.hasArg("num") || !server.hasArg("val")) { server.send(400, "text/plain", "Missing parameters"); return; }
+  int num = server.arg("num").toInt();
+  int val = constrain(server.arg("val").toInt(), 0, 127);
+  if (num < 0 || num >= numPresets) { server.send(400, "text/plain", "Invalid preset"); return; }
+  preferences.begin("synth", false);
+  preferences.putInt(("fl" + String(num)).c_str(), val);
+  preferences.end();
+  server.send(200, "text/plain", "Level saved");
+}
+
+void handleResetFactoryLevel() {
+  if (!isVolumeUnlocked()) { server.send(403, "text/plain", "Volume locked"); return; }
+  if (!server.hasArg("num")) { server.send(400, "text/plain", "Missing preset"); return; }
+  int num = server.arg("num").toInt();
+  if (num < 0 || num >= numPresets) { server.send(400, "text/plain", "Invalid preset"); return; }
+  preferences.begin("synth", false);
+  preferences.remove(("fl" + String(num)).c_str());
+  preferences.end();
+  int lv = presets[num].level;
+  sendParam("level", lv);
+  current.level = lv;
+  server.send(200, "text/plain", String(lv));
+}
+
 void handlePreset() {
   if (server.hasArg("num")) {
     int num = server.arg("num").toInt();
     if (num >= 0 && num < numPresets) {
-      const Preset& p = presets[num];
-      
-      Serial.println("========================================");
+      Preset p = presets[num];
+      p.level = factoryLevel(num);
       Serial.print("Loading preset: ");
       Serial.println(p.name);
-      Serial.println("========================================");
-      
-      // Oscillators
-      sendParam("osc1wave", p.osc1Wave); delay(20);
-      sendParam("osc2wave", p.osc2Wave); delay(20);
-      sendParam("osc2detune", p.osc2Detune); delay(20);
-      sendParam("osc2level", p.osc2Level); delay(20);
-      
-      // Sub Oscillator
-      sendParam("sublevel", p.subLevel); delay(20);
-      sendParam("suboctave", p.subOctave); delay(20);
-      sendParam("subwave", p.subWave); delay(20);
-      
-      // Noise Generator
-      sendParam("noise", p.noiseLevel); delay(20);
-      
-      // Volume ADSR
-      sendParam("attack", p.attack); delay(20);
-      sendParam("decay", p.decay); delay(20);
-      sendParam("sustain", p.sustain); delay(20);
-      sendParam("release", p.release); delay(20);
-      
-      // Filter
-      sendCC(1, p.filterCutoff); delay(20);
-      
-      // Filter Envelope
-      sendParam("fenvenable", p.filterEnvEnabled ? 1 : 0); delay(20);
-      if (p.filterEnvEnabled) {
-        sendParam("fenvattack", p.filterEnvAttack); delay(20);
-        sendParam("fenvdecay", p.filterEnvDecay); delay(20);
-        sendParam("fenvsustain", p.filterEnvSustain); delay(20);
-        sendParam("fenvrelease", p.filterEnvRelease); delay(20);
-        sendParam("fenvamount", p.filterEnvAmount); delay(20);
-      }
-      
-      // LFO1
-      sendParam("lfoenable", p.lfo1Enabled ? 1 : 0); delay(20);
-      if (p.lfo1Enabled) {
-        sendParam("lforate", p.lfo1Rate); delay(20);
-        sendParam("lfowave", p.lfo1Wave); delay(20);
-        sendParam("lfopitch", p.lfo1Pitch); delay(20);
-        sendParam("lfofilter", p.lfo1Filter); delay(20);
-        sendParam("lfoamp", p.lfo1Amp); delay(20);
-        sendParam("lfodetune", p.lfo1Detune); delay(20);
-      }
-      
-      // LFO2
-      sendParam("lfo2enable", p.lfo2Enabled ? 1 : 0); delay(20);
-      if (p.lfo2Enabled) {
-        sendParam("lfo2rate", p.lfo2Rate); delay(20);
-        sendParam("lfo2wave", p.lfo2Wave); delay(20);
-        sendParam("lfo2pitch", p.lfo2Pitch); delay(20);
-        sendParam("lfo2filter", p.lfo2Filter); delay(20);
-        sendParam("lfo2amp", p.lfo2Amp); delay(20);
-        sendParam("lfo2detune", p.lfo2Detune); delay(20);
-      }
-      
-      // Effects
-      sendCC(91, p.delayMix); delay(20);
-      sendCC(93, p.chorusMix); delay(20);
-      
-      // Chorus toggle
-      if (p.chorusEnabled && !chorusEnabled) {
-        sendButton(2);
-        chorusEnabled = true;
-        delay(20);
-      } else if (!p.chorusEnabled && chorusEnabled) {
-        sendButton(2);
-        chorusEnabled = false;
-        delay(20);
-      }
-      
-      Serial.println("Preset loaded!");
-      Serial.println("========================================");
-      
-      // Return comprehensive preset data as JSON
-      String json = "{";
-      json += "\"name\":\"" + String(p.name) + "\",";
-      json += "\"osc1\":" + String(p.osc1Wave) + ",";
-      json += "\"osc2\":" + String(p.osc2Wave) + ",";
-      json += "\"osc2Detune\":" + String(p.osc2Detune) + ",";
-      json += "\"osc2Level\":" + String(p.osc2Level) + ",";
-      json += "\"subLevel\":" + String(p.subLevel) + ",";
-      json += "\"subOctave\":" + String(p.subOctave) + ",";
-      json += "\"subWave\":" + String(p.subWave) + ",";
-      json += "\"noiseLevel\":" + String(p.noiseLevel) + ",";
-      json += "\"attack\":" + String(p.attack) + ",";
-      json += "\"decay\":" + String(p.decay) + ",";
-      json += "\"sustain\":" + String(p.sustain) + ",";
-      json += "\"release\":" + String(p.release) + ",";
-      json += "\"filterCutoff\":" + String(p.filterCutoff) + ",";
-      json += "\"filterEnvEnabled\":" + String(p.filterEnvEnabled ? "true" : "false") + ",";
-      json += "\"lfo1Enabled\":" + String(p.lfo1Enabled ? "true" : "false") + ",";
-      json += "\"lfo2Enabled\":" + String(p.lfo2Enabled ? "true" : "false") + ",";
-      json += "\"delayMix\":" + String(p.delayMix) + ",";
-      json += "\"chorusMix\":" + String(p.chorusMix) + ",";
-      json += "\"chorusEnabled\":" + String(p.chorusEnabled ? "true" : "false");
-      json += "}";
-      
-      server.send(200, "application/json", json);
+      applyPreset(p);
+      server.send(200, "application/json", presetJson(p, String(p.name)));
     } else {
       server.send(400, "text/plain", "Invalid preset number");
     }
@@ -2786,6 +2733,11 @@ void handleSaveUserPreset() {
       userPreset.ringMod = server.arg("ringMod").toInt();
       userPreset.portamentoOn = server.arg("portamentoOn") == "true";
       userPreset.portamentoTime = server.arg("portamentoTime").toInt();
+      userPreset.resonance = server.arg("resonance").toInt();
+      userPreset.delayTime = server.arg("delayTime").toInt();
+      userPreset.delayFeedback = server.arg("delayFeedback").toInt();
+      userPreset.pingPong = server.arg("pingPong") == "true";
+      userPreset.level = server.arg("level").length() ? server.arg("level").toInt() : 64;
       
       saveUserPreset(slot, userPreset);
       server.send(200, "text/plain", "User preset saved to slot " + String(slot));
@@ -2800,96 +2752,13 @@ void handleSaveUserPreset() {
 void handleLoadUserPreset() {
   if (server.hasArg("slot")) {
     int slot = server.arg("slot").toInt();
-    
     if (slot >= 0 && slot < NUM_USER_PRESETS) {
       Preset userPreset;
-      
       if (loadUserPreset(slot, userPreset)) {
-        // Send all parameters to STM32 (same as factory presets)
-        sendParam("osc1wave", userPreset.osc1Wave); delay(20);
-        sendParam("osc2wave", userPreset.osc2Wave); delay(20);
-        sendParam("osc2detune", userPreset.osc2Detune); delay(20);
-        sendParam("osc2level", userPreset.osc2Level); delay(20);
-        sendParam("sublevel", userPreset.subLevel); delay(20);
-        sendParam("suboctave", userPreset.subOctave); delay(20);
-        sendParam("subwave", userPreset.subWave); delay(20);
-        sendParam("noise", userPreset.noiseLevel); delay(20);
-        sendParam("attack", userPreset.attack); delay(20);
-        sendParam("decay", userPreset.decay); delay(20);
-        sendParam("sustain", userPreset.sustain); delay(20);
-        sendParam("release", userPreset.release); delay(20);
-        sendCC(1, userPreset.filterCutoff); delay(20);
-        sendParam("fenvenable", userPreset.filterEnvEnabled ? 1 : 0); delay(20);
-        if (userPreset.filterEnvEnabled) {
-          sendParam("fenvattack", userPreset.filterEnvAttack); delay(20);
-          sendParam("fenvdecay", userPreset.filterEnvDecay); delay(20);
-          sendParam("fenvsustain", userPreset.filterEnvSustain); delay(20);
-          sendParam("fenvrelease", userPreset.filterEnvRelease); delay(20);
-          sendParam("fenvamount", userPreset.filterEnvAmount); delay(20);
-        }
-        sendParam("lfoenable", userPreset.lfo1Enabled ? 1 : 0); delay(20);
-        if (userPreset.lfo1Enabled) {
-          sendParam("lforate", userPreset.lfo1Rate); delay(20);
-          sendParam("lfowave", userPreset.lfo1Wave); delay(20);
-          sendParam("lfopitch", userPreset.lfo1Pitch); delay(20);
-          sendParam("lfofilter", userPreset.lfo1Filter); delay(20);
-          sendParam("lfoamp", userPreset.lfo1Amp); delay(20);
-          sendParam("lfodetune", userPreset.lfo1Detune); delay(20);
-        }
-        sendParam("lfo2enable", userPreset.lfo2Enabled ? 1 : 0); delay(20);
-        if (userPreset.lfo2Enabled) {
-          sendParam("lfo2rate", userPreset.lfo2Rate); delay(20);
-          sendParam("lfo2wave", userPreset.lfo2Wave); delay(20);
-          sendParam("lfo2pitch", userPreset.lfo2Pitch); delay(20);
-          sendParam("lfo2filter", userPreset.lfo2Filter); delay(20);
-          sendParam("lfo2amp", userPreset.lfo2Amp); delay(20);
-          sendParam("lfo2detune", userPreset.lfo2Detune); delay(20);
-        }
-        sendCC(91, userPreset.delayMix); delay(20);
-        sendCC(93, userPreset.chorusMix); delay(20);
-        if (userPreset.chorusEnabled && !chorusEnabled) {
-          sendButton(2);
-          chorusEnabled = true;
-          delay(20);
-        } else if (!userPreset.chorusEnabled && chorusEnabled) {
-          sendButton(2);
-          chorusEnabled = false;
-          delay(20);
-        }
-        sendParam("ringmod", userPreset.ringMod); delay(20);
-        sendParam("portamento", userPreset.portamentoOn ? 1 : 0); delay(20);
-        sendParam("portatime", userPreset.portamentoTime); delay(20);
-        
-        // Return preset data as JSON
-        String json = "{";
-        json += "\"name\":\"User " + String(slot + 1) + "\",";
-        json += "\"osc1\":" + String(userPreset.osc1Wave) + ",";
-        json += "\"osc2\":" + String(userPreset.osc2Wave) + ",";
-        json += "\"osc2Detune\":" + String(userPreset.osc2Detune) + ",";
-        json += "\"osc2Level\":" + String(userPreset.osc2Level) + ",";
-        json += "\"subLevel\":" + String(userPreset.subLevel) + ",";
-        json += "\"subOctave\":" + String(userPreset.subOctave) + ",";
-        json += "\"subWave\":" + String(userPreset.subWave) + ",";
-        json += "\"noiseLevel\":" + String(userPreset.noiseLevel) + ",";
-        json += "\"attack\":" + String(userPreset.attack) + ",";
-        json += "\"decay\":" + String(userPreset.decay) + ",";
-        json += "\"sustain\":" + String(userPreset.sustain) + ",";
-        json += "\"release\":" + String(userPreset.release) + ",";
-        json += "\"filterCutoff\":" + String(userPreset.filterCutoff) + ",";
-        json += "\"filterEnvEnabled\":" + String(userPreset.filterEnvEnabled ? "true" : "false") + ",";
-        json += "\"lfo1Enabled\":" + String(userPreset.lfo1Enabled ? "true" : "false") + ",";
-        json += "\"lfo2Enabled\":" + String(userPreset.lfo2Enabled ? "true" : "false") + ",";
-        json += "\"delayMix\":" + String(userPreset.delayMix) + ",";
-        json += "\"chorusMix\":" + String(userPreset.chorusMix) + ",";
-        json += "\"chorusEnabled\":" + String(userPreset.chorusEnabled ? "true" : "false") + ",";
-        json += "\"ringMod\":" + String(userPreset.ringMod) + ",";
-        json += "\"portamentoOn\":" + String(userPreset.portamentoOn ? "true" : "false") + ",";
-        json += "\"portamentoTime\":" + String(userPreset.portamentoTime);
-        json += "}";
-        
-        server.send(200, "application/json", json);
+        applyPreset(userPreset);
+        server.send(200, "application/json", presetJson(userPreset, "User " + String(slot + 1)));
       } else {
-        server.send(404, "text/plain", "User preset slot is empty");
+        server.send(404, "text/plain", "Empty slot");
       }
     } else {
       server.send(400, "text/plain", "Invalid slot number");
@@ -2923,6 +2792,16 @@ void handleDelayPreset() {
   if (server.hasArg("num")) {
     int preset = server.arg("num").toInt();
     sendParam("delaypreset", preset);  // Send actual preset number
+    // Track the resulting delay settings (same values as the page's buttons)
+    const float t[]  = {0.0f, 0.08f, 0.15f, 0.2f, 0.12f};
+    const float fb[] = {0.0f, 0.0f, 0.6f, 0.5f, 0.5f};
+    const float mx[] = {0.0f, 0.4f, 0.4f, 0.35f, 0.35f};
+    if (preset >= 0 && preset < 5) {
+      int tv = (int)roundf((t[preset] * 1000.0f - 10.0f) / 390.0f * 127.0f);
+      current.delayTime = tv < 0 ? 0 : tv;
+      current.delayFeedback = (int)roundf(fb[preset] * 127.0f);
+      current.delayMix = (int)roundf(mx[preset] * 127.0f);
+    }
     server.send(200, "text/plain", "OK");
   } else {
     server.send(400, "text/plain", "Missing parameter");
@@ -2932,6 +2811,7 @@ void handleDelayPreset() {
 void handleChorus() {
   sendButton(2);
   chorusEnabled = !chorusEnabled;
+  current.chorusEnabled = chorusEnabled;
   server.send(200, "text/plain", "OK");
 }
 
@@ -2972,7 +2852,7 @@ void handleCheckPass() {
   if (server.hasArg("pass")) {
     String inputPass = server.arg("pass");
     preferences.begin("synth", true);
-    String correctPass = preferences.getString("volumePass", "2222");
+    String correctPass = preferences.getString("volumePass", DEFAULT_VOLUME_PASSCODE);
     preferences.end();
     
     if (inputPass == correctPass) {
@@ -2988,6 +2868,15 @@ void handleCheckPass() {
   } else {
     server.send(400, "text/plain", "Missing passcode");
   }
+}
+
+// Returns the saved volume ceiling (0-127) so the page can display it.
+// Read-only: changing the volume still requires the passcode.
+void handleGetVolume() {
+  preferences.begin("synth", true);
+  int vol = preferences.getInt("volume", 89);
+  preferences.end();
+  server.send(200, "text/plain", String(vol));
 }
 
 void handleSaveVolume() {
@@ -3017,7 +2906,7 @@ void handleChangePass() {
     String newPass = server.arg("new");
     
     preferences.begin("synth", true);
-    String correctPass = preferences.getString("volumePass", "2222");
+    String correctPass = preferences.getString("volumePass", DEFAULT_VOLUME_PASSCODE);
     preferences.end();
     
     bool newPassValid = (newPass.length() == 4);
@@ -3060,7 +2949,7 @@ void setup() {
   // Load saved volume and passcode from preferences
   preferences.begin("synth", true);
   int savedVolume = preferences.getInt("volume", 89);  // Default 70%
-  String savedPass = preferences.getString("volumePass", "2222");
+  String savedPass = preferences.getString("volumePass", DEFAULT_VOLUME_PASSCODE);
   preferences.end();
   
   Serial.print("✓ Loaded volume: ");
@@ -3103,14 +2992,31 @@ void setup() {
   server.on("/keyboard", handleKeyboard);
   server.on("/note", handleNote);
   server.on("/checkpass", handleCheckPass);
+  server.on("/getvolume", handleGetVolume);
+  server.on("/state", handleState);
+  server.on("/savefactorylevel", handleSaveFactoryLevel);
+  server.on("/resetfactorylevel", handleResetFactoryLevel);
   server.on("/savevolume", handleSaveVolume);
   server.on("/changepass", handleChangePass);
   
   server.begin();
   Serial.println("✓ Web server started");
   Serial.println("==========================================");
+#if USING_DEFAULT_SECRETS
+  Serial.println("!! WARNING: secrets.h not found - the Wi-Fi password and default");
+  Serial.println("!! passcode are the PUBLIC defaults from secrets.example.h.");
+  Serial.println("!! Copy secrets.example.h to secrets.h and set your own values.");
+#endif
   Serial.println("Ready! Open http://192.168.4.1");
   Serial.println();
+  
+  // Start from a known sound: send the Init preset so the synth and the
+  // page's state agree from power-on
+  delay(300);
+  Preset initPreset = presets[0];
+  initPreset.level = factoryLevel(0);
+  applyPreset(initPreset);
+  Serial.println("✓ Init preset sent to STM32");
 }
 
 void loop() {
