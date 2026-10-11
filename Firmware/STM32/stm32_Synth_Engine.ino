@@ -81,14 +81,24 @@ struct Oscillator {
   float detune;
 };
 
+// Exponential (analog-style) envelope: each stage moves toward a target that
+// lies slightly beyond its end point, like a capacitor charging through a
+// resistor: level = target + (level - target) * mul, once per sample.
+// The target overshoot (ratio) sets the curve shape; the times keep their
+// meaning (a stage takes about the set time from start to end).
+// (Was: straight-line stages.)
 struct Envelope {
   EnvStage stage;
   float level;
-  float attackRate;
-  float decayRate;
+  float attackMul;
+  float decayMul;
   float sustainLevel;
-  float releaseRate;
+  float releaseMul;
 };
+#define ENV_ATTACK_RATIO 0.3f    // gentle curve on attack (analog-like)
+#define ENV_DECAY_RATIO  0.001f  // decay / release: true exponential; the set
+                                 // time is the time to fall 60 dB (like RT60)
+
 
 struct Voice {
   bool active;
@@ -151,15 +161,15 @@ float lastPlayedFreq = 0.0;   // Source frequency for glide
 float noiseLevel = 0.0;    // 0-100% (default OFF)
 
 // ADSR - now adjustable via WiFi!
-float attackTime = 0.005;    // 1-1000 ms
-float decayTime = 0.05;      // 1-1000 ms
+float attackTime = 0.005;    // 1-3000 ms
+float decayTime = 0.05;      // 1-3000 ms
 float sustainLevel = 0.7;    // 0-100%
 float releaseTime = 0.05;    // 1-3000 ms
 
 // Filter Envelope
 bool filterEnvEnabled = false;
-float filterEnvAttack = 0.005;    // 1-1000 ms
-float filterEnvDecay = 0.05;      // 1-1000 ms
+float filterEnvAttack = 0.005;    // 1-3000 ms
+float filterEnvDecay = 0.05;      // 1-3000 ms
 float filterEnvSustain = 0.5;     // 0-100%
 float filterEnvRelease = 0.05;    // 1-3000 ms
 float filterEnvAmount = 0.5;      // 0-100% - how much envelope affects filter
@@ -214,6 +224,7 @@ bool chorusEnabled = false;
 #define CHORUS_RATE_HZ    0.5f   // LFO rate
 float chorusLfoPhase = 0.0f;     // 0..1
 
+float presetLevel = 1.0f;  // per-preset output level (0 .. ~2), set by PARAM level
 float masterVolume = 1.0;  // Maximum (was 0.7 = +43% gain)
 float volumeCeiling = 1.0;  // 0-1: Web-locked maximum volume (parent control)
 float keyboardVolumeCC = 1.0;  // 0-1: MIDI keyboard's volume knob position
@@ -434,6 +445,22 @@ inline int16_t generateNoise() {
   return (int16_t)((noiseSeed >> 16) - 16384);  // Convert to -16384 to +16384 range
 }
 
+// Per-sample multiplier for an envelope stage of 'seconds' with the given
+// overshoot ratio. (Defined here, after all type definitions: the Arduino IDE
+// inserts its automatic function prototypes before the first function in the
+// file, so no function may appear above the struct definitions.)
+// Envelope time controls (0-127) use an exponential scale, as on most synths:
+// 0 = 1 ms, 64 = ~56 ms, 100 = ~545 ms, 127 = 3000 ms. Returns seconds.
+inline float envTimeFromValue(int value) {
+  return 0.001f * powf(3000.0f, value / 127.0f);
+}
+
+inline float envMul(float seconds, float ratio) {
+  float samples = seconds * SAMPLE_RATE;
+  if (samples < 1.0f) samples = 1.0f;
+  return expf(-logf((1.0f + ratio) / ratio) / samples);
+}
+
 void initVoice(Voice* v) {
   v->active = false;
   v->note = 0;
@@ -615,28 +642,21 @@ void noteOn(uint8_t note, float velocity) {
   // Initialize volume envelope
   targetVoice->env.stage = ENV_ATTACK;
   if (!stolen) targetVoice->env.level = 0;
-  targetVoice->env.attackRate = 1.0 / (attackTime * SAMPLE_RATE);
+  targetVoice->env.attackMul  = envMul(attackTime, ENV_ATTACK_RATIO);
   targetVoice->env.sustainLevel = sustainLevel;
-  targetVoice->env.decayRate = (1.0 - targetVoice->env.sustainLevel) / (decayTime * SAMPLE_RATE);
-  
-  // Release rate calculation:
-  // For normal sustain levels, use sustainLevel
-  // For very low sustain (pluck/drum sounds), use a fixed fast release
-  if (targetVoice->env.sustainLevel < 0.01) {
-    // Fast release for drums/plucks - always release in specified time from level 0.05
-    targetVoice->env.releaseRate = 0.05 / (releaseTime * SAMPLE_RATE);
-  } else {
-    targetVoice->env.releaseRate = targetVoice->env.sustainLevel / (releaseTime * SAMPLE_RATE);
-  }
+  targetVoice->env.decayMul   = envMul(decayTime, ENV_DECAY_RATIO);
+  // Exponential release takes about the release time from any level, so the
+  // old special case for pluck sounds is no longer needed
+  targetVoice->env.releaseMul = envMul(releaseTime, ENV_DECAY_RATIO);
   
   // Initialize filter envelope
   if (filterEnvEnabled) {
     targetVoice->filterEnv.stage = ENV_ATTACK;
     if (!stolen) targetVoice->filterEnv.level = 0;
-    targetVoice->filterEnv.attackRate = 1.0 / (filterEnvAttack * SAMPLE_RATE);
-    targetVoice->filterEnv.decayRate = (1.0 - filterEnvSustain) / (filterEnvDecay * SAMPLE_RATE);
+    targetVoice->filterEnv.attackMul  = envMul(filterEnvAttack, ENV_ATTACK_RATIO);
+    targetVoice->filterEnv.decayMul   = envMul(filterEnvDecay, ENV_DECAY_RATIO);
     targetVoice->filterEnv.sustainLevel = filterEnvSustain;
-    targetVoice->filterEnv.releaseRate = filterEnvSustain / (filterEnvRelease * SAMPLE_RATE);
+    targetVoice->filterEnv.releaseMul = envMul(filterEnvRelease, ENV_DECAY_RATIO);
   } else {
     targetVoice->filterEnv.stage = ENV_IDLE;
     targetVoice->filterEnv.level = 1.0;  // Full open when disabled
@@ -651,14 +671,6 @@ void noteOff(uint8_t note) {
   for (int i = 0; i < MAX_VOICES; i++) {
     if (voices[i].active && voices[i].note == note) {
       if (voices[i].env.stage != ENV_RELEASE && voices[i].env.stage != ENV_IDLE) {
-        
-        // For drum/pluck sounds (sustain < 1%), recalculate release rate from CURRENT level
-        // This ensures quick release even if key is released during attack/decay
-        if (voices[i].env.sustainLevel < 0.01) {
-          float currentLevel = voices[i].env.level;
-          if (currentLevel < 0.01) currentLevel = 0.01; // Minimum for calculation
-          voices[i].env.releaseRate = currentLevel / (releaseTime * SAMPLE_RATE);
-        }
         
         voices[i].env.stage = ENV_RELEASE;
         if (filterEnvEnabled) {
@@ -694,55 +706,58 @@ void allNotesOff() {
 
 inline void processEnvelope(Envelope* env) {
   switch(env->stage) {
-    case ENV_ATTACK:
-      env->level += env->attackRate;
-      if (env->level >= 1.0f) {
-        env->level = 1.0f;
-        env->stage = ENV_DECAY;
-      }
+    case ENV_ATTACK: {
+      const float target = 1.0f + ENV_ATTACK_RATIO;
+      env->level = target + (env->level - target) * env->attackMul;
+      if (env->level >= 1.0f) { env->level = 1.0f; env->stage = ENV_DECAY; }
       break;
-    case ENV_DECAY:
-      env->level -= env->decayRate;
-      if (env->level <= env->sustainLevel) {
-        env->level = env->sustainLevel;
-        env->stage = ENV_SUSTAIN;
-      }
+    }
+    case ENV_DECAY: {
+      float target = env->sustainLevel - ENV_DECAY_RATIO;
+      env->level = target + (env->level - target) * env->decayMul;
+      if (env->level <= env->sustainLevel) { env->level = env->sustainLevel; env->stage = ENV_SUSTAIN; }
       break;
+    }
     case ENV_SUSTAIN:
       env->level = env->sustainLevel;
       break;
-    case ENV_RELEASE:
-      env->level -= env->releaseRate;
-      if (env->level <= 0.0f) {
-        env->level = 0.0f;
-        env->stage = ENV_IDLE;
-      }
+    case ENV_RELEASE: {
+      const float target = -ENV_DECAY_RATIO;
+      env->level = target + (env->level - target) * env->releaseMul;
+      if (env->level <= 0.0f) { env->level = 0.0f; env->stage = ENV_IDLE; }
       break;
+    }
     case ENV_IDLE:
       env->level = 0.0f;
       break;
   }
 }
 
-// Advances an envelope by n samples in one step (control-rate processing).
-// Stage changes happen at the block boundary; error is at most one block.
+// Advances an envelope by n samples in one step (control-rate processing,
+// used for the filter envelope). Exact for the exponential curve: mul^n.
 inline void processEnvelopeN(Envelope* env, int n) {
   switch(env->stage) {
-    case ENV_ATTACK:
-      env->level += env->attackRate * n;
+    case ENV_ATTACK: {
+      const float target = 1.0f + ENV_ATTACK_RATIO;
+      env->level = target + (env->level - target) * powf(env->attackMul, (float)n);
       if (env->level >= 1.0f) { env->level = 1.0f; env->stage = ENV_DECAY; }
       break;
-    case ENV_DECAY:
-      env->level -= env->decayRate * n;
+    }
+    case ENV_DECAY: {
+      float target = env->sustainLevel - ENV_DECAY_RATIO;
+      env->level = target + (env->level - target) * powf(env->decayMul, (float)n);
       if (env->level <= env->sustainLevel) { env->level = env->sustainLevel; env->stage = ENV_SUSTAIN; }
       break;
+    }
     case ENV_SUSTAIN:
       env->level = env->sustainLevel;
       break;
-    case ENV_RELEASE:
-      env->level -= env->releaseRate * n;
+    case ENV_RELEASE: {
+      const float target = -ENV_DECAY_RATIO;
+      env->level = target + (env->level - target) * powf(env->releaseMul, (float)n);
       if (env->level <= 0.0f) { env->level = 0.0f; env->stage = ENV_IDLE; }
       break;
+    }
     case ENV_IDLE:
       env->level = 0.0f;
       break;
@@ -1116,8 +1131,8 @@ void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
     chorusWritePos++;
     if (chorusWritePos >= CHORUS_BUFFER_SIZE) chorusWritePos = 0;
     
-    outL = (int32_t)(finalL * masterVolume * 32768.0f);
-    outR = (int32_t)(finalR * masterVolume * 32768.0f);
+    outL = (int32_t)(finalL * masterVolume * presetLevel * 32768.0f);
+    outR = (int32_t)(finalR * masterVolume * presetLevel * 32768.0f);
     
     // No 3x digital gain - prevents clipping with ring mod compensation
     // (Ring mod already has 3× compensation, no need for output gain)
@@ -1434,7 +1449,7 @@ void processCommand(String& cmd, Stream& port, bool fromMIDI) {
         Serial.println(" cents");
       }
       else if (param == "attack") {
-        attackTime = 0.001 + (value / 127.0) * 0.999;  // 1-1000ms
+        attackTime = envTimeFromValue(value);   // 1-3000 ms, exponential scale
         Serial.print("✓ Attack: ");
         Serial.print((int)(attackTime * 1000));
         Serial.print(" ms (value=");
@@ -1442,7 +1457,7 @@ void processCommand(String& cmd, Stream& port, bool fromMIDI) {
         Serial.println(")");
       }
       else if (param == "decay") {
-        decayTime = 0.001 + (value / 127.0) * 0.999;  // 1-1000ms
+        decayTime = envTimeFromValue(value);    // 1-3000 ms, exponential scale
         Serial.print("✓ Decay: ");
         Serial.print((int)(decayTime * 1000));
         Serial.print(" ms (value=");
@@ -1458,7 +1473,7 @@ void processCommand(String& cmd, Stream& port, bool fromMIDI) {
         Serial.println(")");
       }
       else if (param == "release") {
-        releaseTime = 0.001 + (value / 127.0) * 2.999;  // 1-3000ms
+        releaseTime = envTimeFromValue(value);  // 1-3000 ms, exponential scale
         Serial.print("✓ Release: ");
         Serial.print((int)(releaseTime * 1000));
         Serial.print(" ms (value=");
@@ -1562,13 +1577,13 @@ void processCommand(String& cmd, Stream& port, bool fromMIDI) {
       }
       // Filter Envelope Parameters
       else if (param == "fenvattack") {
-        filterEnvAttack = 0.001 + (value / 127.0) * 0.999;  // 1-1000ms
+        filterEnvAttack = envTimeFromValue(value);   // 1-3000 ms, exponential scale
         Serial.print("✓ Filter Env Attack: ");
         Serial.print((int)(filterEnvAttack * 1000));
         Serial.println(" ms");
       }
       else if (param == "fenvdecay") {
-        filterEnvDecay = 0.001 + (value / 127.0) * 0.999;  // 1-1000ms
+        filterEnvDecay = envTimeFromValue(value);    // 1-3000 ms, exponential scale
         Serial.print("✓ Filter Env Decay: ");
         Serial.print((int)(filterEnvDecay * 1000));
         Serial.println(" ms");
@@ -1580,7 +1595,7 @@ void processCommand(String& cmd, Stream& port, bool fromMIDI) {
         Serial.println("%");
       }
       else if (param == "fenvrelease") {
-        filterEnvRelease = 0.001 + (value / 127.0) * 2.999;  // 1-3000ms
+        filterEnvRelease = envTimeFromValue(value);  // 1-3000 ms, exponential scale
         Serial.print("✓ Filter Env Release: ");
         Serial.print((int)(filterEnvRelease * 1000));
         Serial.println(" ms");
@@ -1595,6 +1610,12 @@ void processCommand(String& cmd, Stream& port, bool fromMIDI) {
         filterEnvEnabled = (value > 0);
         Serial.print("✓ Filter Envelope: ");
         Serial.println(filterEnvEnabled ? "ON" : "OFF");
+      }
+      else if (param == "level") {
+        presetLevel = value / 64.0f;        // 64 = 100%, 127 = ~200% (+6 dB)
+        Serial.print("✓ Preset level: ");
+        Serial.print((int)(presetLevel * 100));
+        Serial.println("%");
       }
       else if (param == "resonance") {
         filterResonance = value / 127.0f;   // 0..1
