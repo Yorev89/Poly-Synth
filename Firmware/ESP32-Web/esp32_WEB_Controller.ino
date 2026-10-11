@@ -220,8 +220,8 @@ const Preset presets[] = {
   {"Synth Lead", 1, 1, 13, 89, 32, 1, 0, 0, 26, 95, 102, 90, 48, true, 26, 95, 64, 90, 38, true, 34, 0, 32, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 25, 64, false, 0, true, 20, 32, 94, 40, true, 64},
   // 6. Analog Pad - slow swell, gentle filter movement, drifting detune, chorus
   {"Analog Pad", 1, 3, 19, 89, 25, 1, 0, 4, 101, 110, 108, 124, 29, true, 106, 116, 89, 121, 51, true, 4, 0, 0, 51, 19, 0, true, 9, 1, 0, 0, 0, 38, 19, 57, true, 0, false, 0, 25, 111, 47, true, 64},
-  // 7. Robot Voice - squares + ring mod, stepped (square-LFO) pitch warble
-  {"Robot Voice", 2, 2, 0, 76, 25, 1, 0, 13, 37, 90, 89, 79, 36, true, 26, 90, 0, 79, 51, true, 38, 2, 25, 25, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 51, false, 0, 64, 62, 40, false, 64},
+  // 7. Robot Voice - square ring-modulated by a saw (buzzy), stepped (square-LFO) pitch warble
+  {"Robot Voice", 2, 1, 0, 76, 25, 1, 0, 13, 37, 90, 89, 79, 36, true, 26, 90, 0, 79, 51, true, 38, 2, 25, 25, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 51, false, 0, 64, 62, 40, false, 64},
   // 8. String Ensemble - detuned saws, slow bow-like attack, light vibrato, chorus
   {"String Ensemble", 1, 1, 15, 102, 0, 1, 0, 0, 90, 110, 108, 116, 55, false, 26, 90, 64, 90, 64, true, 31, 0, 13, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 19, 64, true, 0, false, 0, 0, 78, 33, false, 64},
   // 9. Metallic Pad - ring-modulated pad with resonant filter sweep and chorus
