@@ -579,6 +579,33 @@ void noteOn(uint8_t note, float velocity) {
   // step and the steal is click-free (was: level reset to 0 = audible click).
   bool stolen = targetVoice->active;
   
+  // Oscillator phase reset: a new note (on a free voice) starts all its
+  // oscillators at phase 0, so every key press sounds the same. Free-running
+  // phases gave each voice a random osc1/osc2 phase relationship - with equal
+  // tuning (e.g. Robot Voice) the timbre changed from note to note and from
+  // voice to voice. Stolen voices keep their phases to stay click-free.
+  if (!stolen) {
+    targetVoice->osc1.phase = 0;
+    targetVoice->osc2.phase = 0;
+    targetVoice->sub.phase  = 0;
+  }
+  
+  // LFO key sync: when a note starts with no other note held, both LFOs
+  // restart from the beginning of their cycle, so a single note always gets
+  // the same modulation (e.g. Robot Voice's stepped pitch warble). While
+  // other notes are held the LFOs keep running, so they don't jump.
+  bool anyHeld = false;
+  for (int i = 0; i < MAX_VOICES; i++) {
+    if (&voices[i] != targetVoice && voices[i].active && voices[i].env.stage != ENV_RELEASE) {
+      anyHeld = true;
+      break;
+    }
+  }
+  if (!anyHeld) {
+    lfo1.phase = 0;
+    lfo2.phase = 0;
+  }
+  
   // Don't activate yet - set all parameters first
   targetVoice->note = note;
   targetVoice->velocity = velocity;
