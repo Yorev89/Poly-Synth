@@ -18,6 +18,7 @@ and hardware resources.
 ### Synthesis Engine
 - 8-voice polyphony with envelope-based voice scaling and click-free voice stealing
 - Dual oscillators (Osc1 + Osc2) with 4 waveforms each: Sine, Sawtooth, Square, Triangle
+- Band-limited wavetables (one per octave, 2048 samples): alias-free high notes
 - Sub oscillator: Sine or Square, selectable at -1 or -2 octaves
 - White noise generator with adjustable level
 - Ring modulator — continuously blendable from additive mix to full ring modulation
@@ -26,8 +27,9 @@ and hardware resources.
 - Pitch bend with adjustable range
 
 ### Envelopes
-- Volume ADSR: Attack 1–1000ms, Decay 1–1000ms, Sustain 0–100%, Release 1–3000ms
-- Filter ADSR envelope with adjustable amount (0–100%), independently enable/disable
+- Volume ADSR with analog-style exponential curves; attack, decay and release
+  1 ms–3 s each (exponential control scale; release/decay time = time to fall 60 dB)
+- Filter ADSR envelope (same curves and ranges) with adjustable amount, on/off
 
 ### Filter
 - Global resonant low-pass: 2-pole (12 dB/octave) state-variable filter
@@ -51,10 +53,14 @@ and hardware resources.
   Analog Pad, Robot Voice, String Ensemble, Metallic Pad, Pluck Bass, Wobble Bass,
   Sitar, Ambient Wash, Glide Bass, 808 Bass
 - 12 user-saveable preset slots (stored in ESP32 non-volatile memory)
+- Presets store every setting, including resonance, delay time/feedback, ping-pong
+  and a per-preset output level; factory preset levels can be adjusted and saved
+  from the web page (changing a level requires the volume passcode)
 
 ### Connectivity & Control
 - WiFi access point — no app required, connect directly from any browser
-- 4-tab web interface: Sound, Modulation, FX, Presets
+- 4-tab web interface: Sound, Modulation, FX, Presets; the page always shows the
+  synth's current settings (opening or reloading it never changes the sound)
 - BLE MIDI keyboard interface — auto-discovers BLE MIDI devices, with preferred
   device priority and automatic fallback to any BLE MIDI device
 - Web-settable volume ceiling for venue or parental control, protected by a
@@ -63,13 +69,21 @@ and hardware resources.
 
 ## Firmware
 
-| File                       | Board     |
-|----------------------------|-----------|
-| `stm32_Synth_Engine.ino`   | STM32F411 |
-| `esp32_WEB_Controller.ino` | ESP32 #1  |
-| `esp32_BLE.ino`            | ESP32 #2  |
+| File                       | Board     | Also needs (same folder)                 |
+|----------------------------|-----------|------------------------------------------|
+| `stm32_Synth_Engine.ino`   | STM32F411 | `wavetables.h` (generated oscillator tables) |
+| `esp32_WEB_Controller.ino` | ESP32 #1  | `secrets.h` (your own, see below)        |
+| `esp32_BLE.ino`            | ESP32 #2  | —                                        |
 
 All three are built with the Arduino IDE.
+
+### Wi-Fi password and passcode (`secrets.h`)
+The web controller reads its Wi-Fi network name, Wi-Fi password and default
+volume passcode from `secrets.h`, which is deliberately **not** in this
+repository. Copy `secrets.example.h` to `secrets.h` in the same folder and set
+your own values (Wi-Fi password at least 8 characters, passcode 4 digits).
+Without `secrets.h` the sketch still builds using the public defaults, and
+warns you at compile time and on the serial monitor.
 
 ### Required build settings for the STM32
 - Core: STM32duino (STM32 MCU based boards)
@@ -84,5 +98,6 @@ Hardware complete and verified. Firmware is playable and in active
 development. Phase 2 bug fixing is complete (tuning, CPU load, clicks,
 voice stealing, pitch bend, release tails, BLE MIDI parsing, volume lock);
 the freed processor time went into stereo output, a modulated chorus,
-ping-pong delay, and a resonant filter. Next: anti-aliased oscillators and
-exponential envelope curves.
+ping-pong delay, a resonant filter, alias-free oscillators, analog-style
+envelopes and rebuilt presets. Next: hardware upgrades (first candidate:
+the 5-pin DIN MIDI input).
