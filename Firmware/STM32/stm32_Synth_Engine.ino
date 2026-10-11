@@ -4,7 +4,7 @@
  *
  * Features:
  * - 8-voice polyphony with adaptive voice scaling and click-free voice stealing
- * - Dual oscillators + sub oscillator (4 waveforms each), ring modulator
+ * - Dual oscillators + sub (4 waveforms, band-limited wavetables), ring mod
  * - ADSR amplitude envelope per voice + filter envelope
  * - Global resonant 2-pole (12 dB/oct) state-variable low-pass, LFO + envelope
  * - Stereo voice panning by pitch; delay (10-400 ms, presets, ping-pong mode);
@@ -25,11 +25,13 @@
  * BLE MIDI keyboard -> ESP32 #2 -> UART -> STM32
  * Commands: NOTE,<note>,<velocity> | NOTEOFF,<note> | PITCHBEND,<lsb>,<msb> | CC,<num>,<val>
  *
+ * Files: this sketch + wavetables.h (generated band-limited tables) in the same folder
  * Build: Arduino IDE, STM32 core, Board part number: BlackPill F411CE
  *        (uses the 25 MHz crystal), Tools -> Optimize -> Fastest (-O3) REQUIRED
  * (with the default -Os the render loop misses its deadline and audio distorts)
  */
 
+#include "wavetables.h"   // band-limited oscillator tables (same folder as this sketch)
 #include <Arduino.h>
 
 #define TARGET_SAMPLE_RATE 44100.0f
@@ -366,15 +368,29 @@ inline uint32_t modInc(uint32_t inc, float mult, bool on) {
   return on ? (uint32_t)(inc * mult) : inc;
 }
 
-// Returns the wavetable for a waveform (chosen once per buffer instead of a
-// switch on every sample)
-inline const int16_t* waveTablePtr(WaveType type) {
-  switch(type) {
-    case WAVE_SAW:      return sawTable;
-    case WAVE_SQUARE:   return squareTable;
-    case WAVE_TRIANGLE: return triangleTable;
-    default:            return sineTable;
-  }
+// ==================== BAND-LIMITED OSCILLATORS ====================
+// Oscillators read pre-computed band-limited tables (wavetables.h, in flash):
+// 2048 samples per cycle, and for saw / square / triangle one table per
+// octave that contains only harmonics below ~20 kHz. The right table is chosen
+// once per buffer from the note's pitch, so the per-sample cost is a single
+// table read - as cheap as the old 256-sample tables, but alias-free.
+// (The old tables aliased badly on high notes; a PolyBLEP version removed
+// most of the aliasing but cost too much CPU.)
+
+// Phase increment as a fraction of a cycle
+#define PHASE_TO_UNIT (1.0f / 4294967296.0f)
+#define BL_SHIFT (32 - BL_TABLE_BITS)
+
+// Picks the table for a waveform at a given pitch (dt = cycles per sample)
+inline const int16_t* blTable(WaveType type, float dt) {
+  if (type == WAVE_SINE) return BL_SINE;
+  float f = dt * SAMPLE_RATE;
+  int level = 0;
+  float fTop = BL_BASE_HZ;
+  while (f > fTop && level < BL_LEVELS - 1) { fTop *= 2.0f; level++; }
+  if (type == WAVE_SAW)    return BL_SAW[level];
+  if (type == WAVE_SQUARE) return BL_SQUARE[level];
+  return BL_TRI[level];
 }
 
 inline int16_t getWaveSample(WaveType type, uint32_t phase) {
@@ -916,20 +932,25 @@ void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
   // Constant part of the voice gain: int16 -> float, /4 headroom, LFO amp, voice scaling
   float gainConst = (1.0f / 32768.0f / 4.0f) * (ampModOn ? smoothedAmpMod : 1.0f) * voiceScale;
   
+  uint32_t inc1[MAX_VOICES], inc2[MAX_VOICES], incSub[MAX_VOICES];
   const int16_t* tab1[MAX_VOICES];
   const int16_t* tab2[MAX_VOICES];
   const int16_t* tabSub[MAX_VOICES];
-  uint32_t inc1[MAX_VOICES], inc2[MAX_VOICES], incSub[MAX_VOICES];
+  // Only compute sources that are audible: osc2 (and ring mod) need osc2
+  // level > 0, sub needs sub level > 0, noise needs noise level > 0
+  bool needOsc2  = (osc2Level > 0.0f);
+  bool needSub   = (subLevel > 0.0f);
+  bool needNoise = (noiseLevel > 0.0f);
   float voiceGainL[MAX_VOICES], voiceGainR[MAX_VOICES];
   for (int v = 0; v < MAX_VOICES; v++) {
     Voice* voice = &voices[v];
     if (!voice->active) continue;
-    tab1[v]   = waveTablePtr(voice->osc1.waveType);
-    tab2[v]   = waveTablePtr(voice->osc2.waveType);
-    tabSub[v] = waveTablePtr(voice->sub.waveType);
     inc1[v]   = modInc(voice->osc1.phaseInc, pitchMult, pitchModOn);
     inc2[v]   = modInc(voice->osc2.phaseInc, osc2Mult, pitchModOn || detuneModOn);
     incSub[v] = modInc(voice->sub.phaseInc, pitchMult, pitchModOn);  // sub now follows vibrato too
+    tab1[v]   = blTable(voice->osc1.waveType, (float)inc1[v]   * PHASE_TO_UNIT);
+    tab2[v]   = blTable(voice->osc2.waveType, (float)inc2[v]   * PHASE_TO_UNIT);
+    tabSub[v] = blTable(voice->sub.waveType,  (float)incSub[v] * PHASE_TO_UNIT);
     float g = voice->velocity * gainConst;
     voiceGainL[v] = g * voice->panL;
     voiceGainR[v] = g * voice->panR;
@@ -943,14 +964,16 @@ void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
       Voice* voice = &voices[v];
       if (!voice->active) continue;
       
-      // --- Oscillators: direct table reads (index = top 8 bits of phase) ---
-      float s1 = (float)tab1[v][voice->osc1.phase >> 24];
-      float s2 = (float)tab2[v][voice->osc2.phase >> 24];
-      float sS = (float)tabSub[v][voice->sub.phase >> 24];
-      float sN = (float)generateNoise();
-      
-      float mix = cOsc1 * s1 + cOsc2 * s2 + subLevel * sS + noiseLevel * sN;
-      if (ringOn) mix += cRing * s1 * s2;
+      // --- Oscillators: band-limited (PolyBLEP saw/square, interpolated sine) ---
+      float s1 = (float)tab1[v][voice->osc1.phase >> BL_SHIFT];
+      float mix = cOsc1 * s1;
+      if (needOsc2) {
+        float s2 = (float)tab2[v][voice->osc2.phase >> BL_SHIFT];
+        mix += cOsc2 * s2;
+        if (ringOn) mix += cRing * s1 * s2;
+      }
+      if (needSub)   mix += subLevel * (float)tabSub[v][voice->sub.phase >> BL_SHIFT];
+      if (needNoise) mix += noiseLevel * (float)generateNoise();
       
       float x = mix * voice->env.level;
       mixLf += x * voiceGainL[v];
