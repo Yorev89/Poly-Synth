@@ -40,7 +40,11 @@
 // the clock tree can't produce exactly 44100 Hz.
 float SAMPLE_RATE = TARGET_SAMPLE_RATE;
 uint16_t i2sPrescaler = 0;  // Value for SPI2->I2SPR: I2SDIV | (ODD << 8)
-// DIAGNOSTICS (temporary): render timing
+// DIAGNOSTICS (on demand): render timing is always measured (a few cycles);
+// it is printed only when requested from the serial monitor:
+//   stats  - toggle a once-per-second load report
+//   clock  - print the clock configuration
+bool diagStatsOn = false;
 uint32_t diagMaxRenderCycles = 0;
 uint32_t diagMissedBuffers = 0;
 volatile uint32_t diagHalfStamp = 0, diagFullStamp = 0;  // DWT time of DMA interrupt
@@ -1747,6 +1751,40 @@ void processWebControl() {
 }
 
 
+// Prints the clock tree as actually configured (serial command "clock")
+void printClockInfo() {
+  uint32_t pc = RCC->PLLCFGR;
+  uint32_t pi = RCC->PLLI2SCFGR;
+  Serial.print("SystemCoreClock: "); Serial.print(SystemCoreClock); Serial.println(" Hz");
+  Serial.print("Main PLL: M="); Serial.print(pc & 0x3F);
+  Serial.print(" N="); Serial.print((pc >> 6) & 0x1FF);
+  Serial.print(" P="); Serial.print((((pc >> 16) & 0x3) + 1) * 2);
+  Serial.print(" SRC="); Serial.println((pc & RCC_PLLCFGR_PLLSRC) ? "HSE" : "HSI");
+  Serial.print("PLLI2S: M="); Serial.print(pi & 0x3F);
+  Serial.print(" N="); Serial.print((pi >> 6) & 0x1FF);
+  Serial.print(" R="); Serial.println((pi >> 28) & 0x7);
+  Serial.print("Sample rate: "); Serial.print(SAMPLE_RATE, 2); Serial.println(" Hz");
+}
+
+// Diagnostic commands typed in the serial monitor (USB)
+void processDiagCommands() {
+  static char lineBuf[32];
+  static size_t linePos = 0;
+  while (readLineNB(Serial, lineBuf, sizeof(lineBuf), linePos)) {
+    String cmd = lineBuf;
+    cmd.trim();
+    cmd.toLowerCase();
+    if (cmd == "stats") {
+      diagStatsOn = !diagStatsOn;
+      Serial.println(diagStatsOn ? "Load report ON (type stats to stop)" : "Load report OFF");
+    } else if (cmd == "clock") {
+      printClockInfo();
+    } else if (cmd.length()) {
+      Serial.println("Commands: stats (toggle load report), clock");
+    }
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   ESP32Serial.begin(115200);
@@ -1757,27 +1795,12 @@ void setup() {
   // Must run before anything that uses SAMPLE_RATE (filter, LFOs, envelopes)
   SAMPLE_RATE = configureI2SClock(TARGET_SAMPLE_RATE);
   
-  // --- DIAGNOSTICS (temporary): clock tree as actually configured ---
-  {
-    uint32_t pc = RCC->PLLCFGR;
-    uint32_t pi = RCC->PLLI2SCFGR;
-    Serial.print("SystemCoreClock: "); Serial.print(SystemCoreClock); Serial.println(" Hz");
-    Serial.print("HSE_VALUE: "); Serial.println((uint32_t)HSE_VALUE);
-    Serial.print("Main PLL: M="); Serial.print(pc & 0x3F);
-    Serial.print(" N="); Serial.print((pc >> 6) & 0x1FF);
-    Serial.print(" P="); Serial.print((((pc >> 16) & 0x3) + 1) * 2);
-    Serial.print(" SRC="); Serial.println((pc & RCC_PLLCFGR_PLLSRC) ? "HSE" : "HSI");
-    Serial.print("PLLI2SCFGR readback: 0x"); Serial.print(pi, HEX);
-    Serial.print("  M="); Serial.print(pi & 0x3F);
-    Serial.print(" N="); Serial.print((pi >> 6) & 0x1FF);
-    Serial.print(" R="); Serial.println((pi >> 28) & 0x7);
-  }
   // Cycle counter for render-time measurement
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT->CYCCNT = 0;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
   
-  Serial.println("Ready!");
+  Serial.println("Ready! (serial monitor commands: stats, clock)");
   
   // MidiSerial.begin(MIDI_BAUD_RATE);  // COMMENTED OUT - using WebSerial
   WebSerial.begin(115200);  // ESP32 #1 Web Control on PA10
@@ -1877,6 +1900,7 @@ void loop() {
   processMIDI();  // 5-pin MIDI (commented out inside)
   processESP32Commands();  // ESP32 #2 BLE MIDI on PA3
   processWebControl();  // ESP32 #1 Web Control on PA10
+  processDiagCommands(); // serial monitor: "stats", "clock"
   
   static uint32_t lastHalf = 0;
   static uint32_t lastFull = 0;
@@ -1910,8 +1934,8 @@ void loop() {
     lastBlink = millis();
     digitalWrite(PC13, !digitalRead(PC13));
     
-    // DIAGNOSTICS (temporary): worst-case render time vs. half-buffer budget
-    {
+    // DIAGNOSTICS (on demand): worst-case render time vs. half-buffer budget
+    if (diagStatsOn) {
       float budgetUs = (AUDIO_BUFFER_SIZE / 4) * 1e6f / SAMPLE_RATE;  // 128 frames
       float maxUs = diagMaxRenderCycles * 1e6f / SystemCoreClock;
       int voicesOn = 0;
@@ -1924,9 +1948,9 @@ void loop() {
       Serial.print("%  late="); Serial.print(diagLateBuffers);
       Serial.print("  missed="); Serial.print(diagMissedBuffers);
       Serial.print("  voices="); Serial.println(voicesOn);
-      diagMaxRenderCycles = 0;
-      diagMaxLatencyCycles = 0;
     }
+    diagMaxRenderCycles = 0;
+    diagMaxLatencyCycles = 0;
     
     // (30-second stuck-note watchdog removed: it also cut legitimately held
     //  notes. Stuck notes are now prevented at the source - fixed BLE parser,
