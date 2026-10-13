@@ -5,7 +5,7 @@
  * Features:
  * - Wi-Fi access point serving the full web interface
  * - 4-screen tabbed interface (Sound, Modulation, FX, Presets)
- * - 15 factory presets + 12 user preset slots (stored in ESP32 flash, Preferences)
+ * - 16 factory presets + 12 user preset slots (stored in ESP32 flash, Preferences)
  * - On-screen keyboard page
  * - Volume ceiling protected by a 4-digit passcode, enforced by the server
  *   (5-minute unlock window)
@@ -18,6 +18,9 @@
  * Wi-Fi:
  * - Access point at IP 192.168.4.1. Network name, password and the default
  *   volume passcode are in secrets.h (not published - see secrets.example.h)
+ *
+ * MIDI Play: the laptop app (MIDI-Play/midiplay.py) sends note commands over
+ *   this board's USB port; relayUsbMidi() forwards them to the STM32.
  *
  * UART protocol (one-way, 115200 baud, one command per line):
  * - PARAM,<name>,<value> | CC,<num>,<value> | NOTE,<note>,<velocity> | NOTEOFF,<note>
@@ -238,11 +241,14 @@ const Preset presets[] = {
   // 14. Glide Bass - Fat Bass with portamento between notes
   {"Glide Bass", 1, 1, 6, 89, 76, 1, 0, 0, 17, 101, 76, 88, 15, true, 17, 90, 25, 88, 44, false, 41, 0, 0, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 0, true, 30, 19, 62, 40, false, 64},
   // 15. 808 Bass - pure sine with a long booming decay (no pitch drop: not available)
-  {"808 Bass", 0, 0, 0, 0, 51, 1, 0, 0, 0, 124, 0, 116, 23, false, 26, 90, 64, 90, 64, false, 41, 0, 0, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 0, false, 0, 0, 62, 40, false, 96}
+  {"808 Bass", 0, 0, 0, 0, 51, 1, 0, 0, 0, 124, 0, 116, 23, false, 26, 90, 64, 90, 64, false, 41, 0, 0, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 64, false, 0, false, 0, 0, 62, 40, false, 96},
+  // 16. Piano - for MIDI Play, tuned by ear: Bell Chime (sine + triangle, instant attack, long
+  //     decay, no sustain) with a 10% sine sub one octave down, ~291 ms release, no delay
+  {"Piano", 0, 3, 4, 127, 13, 1, 0, 0, 0, 124, 0, 90, 99, false, 26, 90, 64, 90, 64, false, 41, 0, 0, 0, 0, 0, false, 16, 0, 0, 0, 0, 0, 0, 44, true, 25, false, 0, 0, 94, 40, false, 115}
 };
 
 
-const int numPresets = 15;
+const int numPresets = 16;
 
 // User Preset Management Functions
 void saveUserPreset(int slot, const Preset& preset) {
@@ -1509,6 +1515,7 @@ const char HTML_CHUNK_3[] PROGMEM = R"rawliteral(="updateParam('lfo2filter', thi
         <button class="preset-btn" onclick="loadPreset(12)">Ambient Wash</button>
         <button class="preset-btn" onclick="loadPreset(13)">Glide Bass</button>
         <button class="preset-btn" onclick="loadPreset(14)">808 Bass</button>
+        <button class="preset-btn" onclick="loadPreset(15)">Piano</button>
       </div>
     </div>
 
@@ -3020,8 +3027,44 @@ void setup() {
   Serial.println("✓ Init preset sent to STM32");
 }
 
+// ========== MIDI PLAY RELAY (USB serial -> STM32) ==========
+// The MIDI Play app on a laptop, connected to this board's USB port, sends
+// note commands as text lines. They are passed on unchanged to the STM32 over
+// the same UART the web page uses - no Wi-Fi involved, so timing stays tight.
+// Only playing commands are accepted; synth settings (and the passcode-
+// protected volume, CC 7) can't be changed this way.
+//   PING            -> replies "POLYSYNTH_MIDI_OK" (lets the app find the port)
+//   NOTE,<n>,<v>  NOTEOFF,<n>  PITCHBEND,<lsb>,<msb>  CC,64|120|123,<v>
+bool isRelayCommand(const char* c) {
+  return strncmp(c, "NOTE,", 5) == 0 || strncmp(c, "NOTEOFF,", 8) == 0 ||
+         strncmp(c, "PITCHBEND,", 10) == 0 || strncmp(c, "CC,64,", 6) == 0 ||
+         strncmp(c, "CC,120,", 7) == 0 || strncmp(c, "CC,123,", 7) == 0;
+}
+
+void relayUsbMidi() {
+  static char buf[48];
+  static size_t pos = 0;
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\r') continue;
+    if (c != '\n') {
+      if (pos < sizeof(buf) - 1) buf[pos++] = c;
+      continue;
+    }
+    buf[pos] = 0;
+    pos = 0;
+    if (strcmp(buf, "PING") == 0) {
+      Serial.println("POLYSYNTH_MIDI_OK");
+    } else if (isRelayCommand(buf)) {
+      Serial2.print(buf);                  // straight through, no echo (keeps
+      Serial2.print('\n');                 // the USB line quiet while playing)
+    }
+  }
+}
+
 void loop() {
   server.handleClient();
+  relayUsbMidi();
   
   // Status update every 30 seconds
   static unsigned long lastStatus = 0;
@@ -3031,5 +3074,6 @@ void loop() {
     Serial.println(commandsSent);
   }
   
-  delay(2);
+  relayUsbMidi();
+  delay(1);   // was 2 ms; shorter so relayed notes wait less
 }
