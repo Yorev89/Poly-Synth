@@ -78,9 +78,9 @@ and hardware resources.
 
 | File                       | Board     | Also needs (same folder)                 |
 |----------------------------|-----------|------------------------------------------|
-| `stm32_Synth_Engine.ino`   | STM32F411 | `wavetables.h` (generated oscillator tables) |
-| `esp32_WEB_Controller.ino` | ESP32 #1  | `secrets.h` (your own, see below)        |
-| `esp32_BLE.ino`            | ESP32 #2  | —                                        |
+| `Firmware/STM32/stm32_Synth_Engine.ino`   | STM32F411 | `wavetables.h` (generated oscillator tables) |
+| `Firmware/ESP32-Web/esp32_WEB_Controller.ino` | ESP32 #1  | `secrets.h` (your own, see below)        |
+| `Firmware/ESP32-BLE/esp32_BLE.ino`            | ESP32 #2  | —                                        |
 | `MIDI-Play/midiplay.py`    | Laptop (Python 3) | `pip install mido pyserial`      |
 
 The three firmware files are built with the Arduino IDE.
