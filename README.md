@@ -49,9 +49,9 @@ and hardware resources.
 - Modulated stereo chorus
 
 ### Presets
-- 15 factory presets: Init/Default, Fat Bass, TB-303 Acid, Bell Chime, Synth Lead,
+- 16 factory presets: Init/Default, Fat Bass, TB-303 Acid, Bell Chime, Synth Lead,
   Analog Pad, Robot Voice, String Ensemble, Metallic Pad, Pluck Bass, Wobble Bass,
-  Sitar, Ambient Wash, Glide Bass, 808 Bass
+  Sitar, Ambient Wash, Glide Bass, 808 Bass, Piano (tuned for MIDI Play)
 - 12 user-saveable preset slots (stored in ESP32 non-volatile memory)
 - Presets store every setting, including resonance, delay time/feedback, ping-pong
   and a per-preset output level; factory preset levels can be adjusted and saved
@@ -66,6 +66,13 @@ and hardware resources.
 - Web-settable volume ceiling for venue or parental control, protected by a
   4-digit passcode enforced by the web controller
 - MIDI keyboard volume (CC7) respects the web-set ceiling
+- **MIDI Play:** a laptop app plays standard MIDI files on the synth over the web
+  controller's USB port (no Wi-Fi, ~1 ms timing), with sustain-pedal emulation.
+  See [`MIDI-Play/`](MIDI-Play/README.md)
+
+### Protection
+- Subsonic protection: 30 Hz output high-pass, and the sub-oscillator fades out
+  below 45 Hz, so very low notes can't overdrive amplifiers and speakers
 
 ## Firmware
 
@@ -74,8 +81,14 @@ and hardware resources.
 | `stm32_Synth_Engine.ino`   | STM32F411 | `wavetables.h` (generated oscillator tables) |
 | `esp32_WEB_Controller.ino` | ESP32 #1  | `secrets.h` (your own, see below)        |
 | `esp32_BLE.ino`            | ESP32 #2  | —                                        |
+| `MIDI-Play/midiplay.py`    | Laptop (Python 3) | `pip install mido pyserial`      |
 
-All three are built with the Arduino IDE.
+The three firmware files are built with the Arduino IDE.
+
+### Diagnostics (STM32 serial monitor, 115200 baud, line ending "Newline")
+- `stats` — toggles a once-per-second load report: worst-case render time against
+  the 2.9 ms deadline, late buffers, active voices
+- `clock` — prints the clock configuration and the actual sample rate
 
 ### Wi-Fi password and passcode (`secrets.h`)
 The web controller reads its Wi-Fi network name, Wi-Fi password and default
@@ -99,5 +112,5 @@ development. Phase 2 bug fixing is complete (tuning, CPU load, clicks,
 voice stealing, pitch bend, release tails, BLE MIDI parsing, volume lock);
 the freed processor time went into stereo output, a modulated chorus,
 ping-pong delay, a resonant filter, alias-free oscillators, analog-style
-envelopes and rebuilt presets. Next: hardware upgrades (first candidate:
-the 5-pin DIN MIDI input).
+envelopes and rebuilt presets. MIDI Play (phase 1) plays MIDI files from a
+laptop. Next: hardware upgrades (first candidate: the 5-pin DIN MIDI input).
