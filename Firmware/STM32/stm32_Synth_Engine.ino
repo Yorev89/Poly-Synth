@@ -13,6 +13,7 @@
  * - 15 factory presets + 12 user preset slots (stored on ESP32 #1)
  * - I2S sample rate computed at boot; tuning compensated to the real rate
  * - Voice gain scaled by summed envelope levels (smooth chords and release tails)
+ * - Subsonic protection: 30 Hz output high-pass, sub-oscillator fades below 45 Hz
  *
  * Hardware:
  * - STM32F411CEU6 (WeAct Black Pill V3.1), 25 MHz HSE, 96 MHz core
@@ -493,6 +494,40 @@ void updateGlobalFilter(float cutoffHz) {
 void resetGlobalFilter() {
   globalFilter.ic1L = globalFilter.ic2L = 0.0f;
   globalFilter.ic1R = globalFilter.ic2R = 0.0f;
+}
+
+// ==================== SUBSONIC PROTECTION ====================
+// Nothing useful is audible below ~30 Hz, but energy there (the lowest piano
+// notes, and especially a sub-oscillator an octave below them, ~14 Hz) makes
+// amplifiers clip and small speakers bottom out - heard as "choking".
+//  1. A 2-pole (12 dB/oct) high-pass at OUTPUT_HPF_HZ on the final output
+//     (same state-variable structure as the main filter, Butterworth Q).
+//  2. The sub-oscillator fades out when its pitch would fall below
+//     SUB_FADE_LO_HZ (silent) .. SUB_FADE_HI_HZ (full level).
+#define OUTPUT_HPF_HZ   30.0f
+#define SUB_FADE_LO_HZ  30.0f
+#define SUB_FADE_HI_HZ  45.0f
+struct OutputHPF {
+  float a1, a2, a3, k;
+  float ic1L, ic2L, ic1R, ic2R;
+} outHPF;
+
+void initOutputHPF() {
+  float g = tanf((float)PI * OUTPUT_HPF_HZ / SAMPLE_RATE);
+  outHPF.k  = 1.4142f;                      // Q = 0.707 (Butterworth)
+  outHPF.a1 = 1.0f / (1.0f + g * (g + outHPF.k));
+  outHPF.a2 = g * outHPF.a1;
+  outHPF.a3 = g * outHPF.a2;
+  outHPF.ic1L = outHPF.ic2L = outHPF.ic1R = outHPF.ic2R = 0.0f;
+}
+
+inline float outputHPF(float x, float& ic1, float& ic2) {
+  float v3 = x - ic2;
+  float v1 = outHPF.a1 * ic1 + outHPF.a2 * v3;
+  float v2 = ic2 + outHPF.a2 * ic1 + outHPF.a3 * v3;
+  ic1 = 2.0f * v1 - ic1;
+  ic2 = 2.0f * v2 - ic2;
+  return x - outHPF.k * v1 - v2;            // high-pass output
 }
 
 // Bend ratio currently applied to the voices (1.0 = no bend)
@@ -988,6 +1023,7 @@ void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
   bool needSub   = (subLevel > 0.0f);
   bool needNoise = (noiseLevel > 0.0f);
   float voiceGainL[MAX_VOICES], voiceGainR[MAX_VOICES];
+  float subGain[MAX_VOICES];
   for (int v = 0; v < MAX_VOICES; v++) {
     Voice* voice = &voices[v];
     if (!voice->active) continue;
@@ -997,6 +1033,10 @@ void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
     tab1[v]   = blTable(voice->osc1.waveType, (float)inc1[v]   * PHASE_TO_UNIT);
     tab2[v]   = blTable(voice->osc2.waveType, (float)inc2[v]   * PHASE_TO_UNIT);
     tabSub[v] = blTable(voice->sub.waveType,  (float)incSub[v] * PHASE_TO_UNIT);
+    // Sub level fades out for very low notes (subsonic protection)
+    float subHz = (float)incSub[v] * PHASE_TO_UNIT * SAMPLE_RATE;
+    float sf = (subHz - SUB_FADE_LO_HZ) / (SUB_FADE_HI_HZ - SUB_FADE_LO_HZ);
+    subGain[v] = subLevel * (sf < 0.0f ? 0.0f : (sf > 1.0f ? 1.0f : sf));
     float g = voice->velocity * gainConst;
     voiceGainL[v] = g * voice->panL;
     voiceGainR[v] = g * voice->panR;
@@ -1018,7 +1058,7 @@ void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
         mix += cOsc2 * s2;
         if (ringOn) mix += cRing * s1 * s2;
       }
-      if (needSub)   mix += subLevel * (float)tabSub[v][voice->sub.phase >> BL_SHIFT];
+      if (needSub)   mix += subGain[v] * (float)tabSub[v][voice->sub.phase >> BL_SHIFT];
       if (needNoise) mix += noiseLevel * (float)generateNoise();
       
       float x = mix * voice->env.level;
@@ -1161,6 +1201,10 @@ void renderAudio(int16_t* buffer, int startIdx, int numSamples) {
     
     chorusWritePos++;
     if (chorusWritePos >= CHORUS_BUFFER_SIZE) chorusWritePos = 0;
+    
+    // Subsonic high-pass (see initOutputHPF)
+    finalL = outputHPF(finalL, outHPF.ic1L, outHPF.ic2L);
+    finalR = outputHPF(finalR, outHPF.ic1R, outHPF.ic2R);
     
     outL = (int32_t)(finalL * masterVolume * presetLevel * 32768.0f);
     outR = (int32_t)(finalR * masterVolume * presetLevel * 32768.0f);
@@ -1813,6 +1857,7 @@ void setup() {
   
   resetGlobalFilter();
   updateGlobalFilter(filterCutoff);
+  initOutputHPF();
   
   // Initialize LFO1
   lfo1.phase = 0;
