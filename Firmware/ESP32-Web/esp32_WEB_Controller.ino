@@ -197,7 +197,22 @@ struct Preset {
 };
 
 // Forward declarations for user preset functions
-void saveUserPreset(int slot, const Preset& preset);
+#define PRESET_BLOB_VERSION 1
+#define PRESET_FIELDS 44
+struct StoredPreset {
+  uint8_t version;
+  uint8_t count;
+  int16_t v[PRESET_FIELDS];
+  char name[21];
+};
+// Functions taking Preset / StoredPreset are declared here, after the structs
+// (the Arduino IDE would otherwise put its automatic prototypes above them)
+static void presetToArray(const Preset& p, int16_t* v);
+static void arrayToPreset(const int16_t* v, Preset& p);
+static bool readStoredPreset(int slot, StoredPreset& sp);
+bool saveUserPreset(int slot, const Preset& preset);
+bool loadLegacyUserPreset(int slot, Preset& preset);
+size_t nvsFreeEntries();
 bool loadUserPreset(int slot, Preset& preset);
 bool isUserPresetUsed(int slot);
 String getUserPresetName(int slot);
@@ -251,71 +266,157 @@ const Preset presets[] = {
 const int numPresets = 16;
 
 // User Preset Management Functions
-void saveUserPreset(int slot, const Preset& preset) {
-  if (slot < 0 || slot >= NUM_USER_PRESETS) return;
-  
-  preferences.begin("synth", false);  // Open in read-write mode
-  
+// ---- User preset storage ----
+// Each user preset is stored as ONE compact block ("p<slot>", about 110 bytes)
+// in the ESP32's settings storage (NVS). The old format used 46 separate
+// entries per preset; 12 slots needed ~560 entries, more than the default
+// NVS partition holds (~500, shared with Wi-Fi), so saves failed silently.
+// Presets in the old format are converted automatically at boot.
+
+// (StoredPreset is defined next to struct Preset, near the top of the file)
+
+// Field order of the stored block (append new fields at the end only)
+static void presetToArray(const Preset& p, int16_t* v) {
+  int i = 0;
+  v[i++] = p.osc1Wave;  v[i++] = p.osc2Wave;  v[i++] = p.osc2Detune; v[i++] = p.osc2Level;
+  v[i++] = p.subLevel;  v[i++] = p.subOctave; v[i++] = p.subWave;    v[i++] = p.noiseLevel;
+  v[i++] = p.attack;    v[i++] = p.decay;     v[i++] = p.sustain;    v[i++] = p.release;
+  v[i++] = p.filterCutoff;
+  v[i++] = p.filterEnvEnabled; v[i++] = p.filterEnvAttack; v[i++] = p.filterEnvDecay;
+  v[i++] = p.filterEnvSustain; v[i++] = p.filterEnvRelease; v[i++] = p.filterEnvAmount;
+  v[i++] = p.lfo1Enabled; v[i++] = p.lfo1Rate; v[i++] = p.lfo1Wave; v[i++] = p.lfo1Pitch;
+  v[i++] = p.lfo1Filter;  v[i++] = p.lfo1Amp;  v[i++] = p.lfo1Detune;
+  v[i++] = p.lfo2Enabled; v[i++] = p.lfo2Rate; v[i++] = p.lfo2Wave; v[i++] = p.lfo2Pitch;
+  v[i++] = p.lfo2Filter;  v[i++] = p.lfo2Amp;  v[i++] = p.lfo2Detune;
+  v[i++] = p.delayMix; v[i++] = p.chorusMix; v[i++] = p.chorusEnabled;
+  v[i++] = p.ringMod;  v[i++] = p.portamentoOn; v[i++] = p.portamentoTime;
+  v[i++] = p.resonance; v[i++] = p.delayTime; v[i++] = p.delayFeedback;
+  v[i++] = p.pingPong;  v[i++] = p.level;
+}
+
+static void arrayToPreset(const int16_t* v, Preset& p) {
+  int i = 0;
+  p.osc1Wave = v[i++];  p.osc2Wave = v[i++];  p.osc2Detune = v[i++]; p.osc2Level = v[i++];
+  p.subLevel = v[i++];  p.subOctave = v[i++]; p.subWave = v[i++];    p.noiseLevel = v[i++];
+  p.attack = v[i++];    p.decay = v[i++];     p.sustain = v[i++];    p.release = v[i++];
+  p.filterCutoff = v[i++];
+  p.filterEnvEnabled = v[i++]; p.filterEnvAttack = v[i++]; p.filterEnvDecay = v[i++];
+  p.filterEnvSustain = v[i++]; p.filterEnvRelease = v[i++]; p.filterEnvAmount = v[i++];
+  p.lfo1Enabled = v[i++]; p.lfo1Rate = v[i++]; p.lfo1Wave = v[i++]; p.lfo1Pitch = v[i++];
+  p.lfo1Filter = v[i++];  p.lfo1Amp = v[i++];  p.lfo1Detune = v[i++];
+  p.lfo2Enabled = v[i++]; p.lfo2Rate = v[i++]; p.lfo2Wave = v[i++]; p.lfo2Pitch = v[i++];
+  p.lfo2Filter = v[i++];  p.lfo2Amp = v[i++];  p.lfo2Detune = v[i++];
+  p.delayMix = v[i++]; p.chorusMix = v[i++]; p.chorusEnabled = v[i++];
+  p.ringMod = v[i++];  p.portamentoOn = v[i++]; p.portamentoTime = v[i++];
+  p.resonance = v[i++]; p.delayTime = v[i++]; p.delayFeedback = v[i++];
+  p.pingPong = v[i++];  p.level = v[i++];
+}
+
+static String blobKey(int slot) { return "p" + String(slot); }
+
+size_t nvsFreeEntries() {
+  preferences.begin("synth", true);
+  size_t n = preferences.freeEntries();
+  preferences.end();
+  return n;
+}
+
+// Old-format entry names (one key per setting), removed after conversion
+static const char* LEGACY_SUFFIXES[] = {
+  "o1w","o2w","o2d","o2l","sub","sbo","sbw","noi","atk","dec","sus","rel","fil",
+  "fen","fea","fed","fes","fer","fem","l1e","l1r","l1w","l1p","l1f","l1a","l1d",
+  "l2e","l2r","l2w","l2p","l2f","l2a","l2d","dlm","chm","che","rng","poe","pot",
+  "res","dlt","dlf","png","lvl","nam","use"
+};
+
+static void removeLegacyKeys(int slot) {
   String prefix = "u" + String(slot) + "_";
-  
-  // Save all preset parameters
-  preferences.putInt((prefix + "o1w").c_str(), preset.osc1Wave);
-  preferences.putInt((prefix + "o2w").c_str(), preset.osc2Wave);
-  preferences.putInt((prefix + "o2d").c_str(), preset.osc2Detune);
-  preferences.putInt((prefix + "o2l").c_str(), preset.osc2Level);
-  preferences.putInt((prefix + "sub").c_str(), preset.subLevel);
-  preferences.putInt((prefix + "sbo").c_str(), preset.subOctave);
-  preferences.putInt((prefix + "sbw").c_str(), preset.subWave);
-  preferences.putInt((prefix + "noi").c_str(), preset.noiseLevel);
-  preferences.putInt((prefix + "atk").c_str(), preset.attack);
-  preferences.putInt((prefix + "dec").c_str(), preset.decay);
-  preferences.putInt((prefix + "sus").c_str(), preset.sustain);
-  preferences.putInt((prefix + "rel").c_str(), preset.release);
-  preferences.putInt((prefix + "fil").c_str(), preset.filterCutoff);
-  preferences.putBool((prefix + "fen").c_str(), preset.filterEnvEnabled);
-  preferences.putInt((prefix + "fea").c_str(), preset.filterEnvAttack);
-  preferences.putInt((prefix + "fed").c_str(), preset.filterEnvDecay);
-  preferences.putInt((prefix + "fes").c_str(), preset.filterEnvSustain);
-  preferences.putInt((prefix + "fer").c_str(), preset.filterEnvRelease);
-  preferences.putInt((prefix + "fem").c_str(), preset.filterEnvAmount);
-  preferences.putBool((prefix + "l1e").c_str(), preset.lfo1Enabled);
-  preferences.putInt((prefix + "l1r").c_str(), preset.lfo1Rate);
-  preferences.putInt((prefix + "l1w").c_str(), preset.lfo1Wave);
-  preferences.putInt((prefix + "l1p").c_str(), preset.lfo1Pitch);
-  preferences.putInt((prefix + "l1f").c_str(), preset.lfo1Filter);
-  preferences.putInt((prefix + "l1a").c_str(), preset.lfo1Amp);
-  preferences.putInt((prefix + "l1d").c_str(), preset.lfo1Detune);
-  preferences.putBool((prefix + "l2e").c_str(), preset.lfo2Enabled);
-  preferences.putInt((prefix + "l2r").c_str(), preset.lfo2Rate);
-  preferences.putInt((prefix + "l2w").c_str(), preset.lfo2Wave);
-  preferences.putInt((prefix + "l2p").c_str(), preset.lfo2Pitch);
-  preferences.putInt((prefix + "l2f").c_str(), preset.lfo2Filter);
-  preferences.putInt((prefix + "l2a").c_str(), preset.lfo2Amp);
-  preferences.putInt((prefix + "l2d").c_str(), preset.lfo2Detune);
-  preferences.putInt((prefix + "dlm").c_str(), preset.delayMix);
-  preferences.putInt((prefix + "chm").c_str(), preset.chorusMix);
-  preferences.putBool((prefix + "che").c_str(), preset.chorusEnabled);
-  preferences.putInt((prefix + "rng").c_str(), preset.ringMod);
-  preferences.putBool((prefix + "poe").c_str(), preset.portamentoOn);
-  preferences.putInt((prefix + "pot").c_str(), preset.portamentoTime);
-  preferences.putInt((prefix + "res").c_str(), preset.resonance);
-  preferences.putInt((prefix + "dlt").c_str(), preset.delayTime);
-  preferences.putInt((prefix + "dlf").c_str(), preset.delayFeedback);
-  preferences.putBool((prefix + "png").c_str(), preset.pingPong);
-  preferences.putInt((prefix + "lvl").c_str(), preset.level);
-  
-  // Save preset name (max 20 characters)
-  String name = String(preset.name);
-  if (name.length() > 20) name = name.substring(0, 20);
-  preferences.putString((prefix + "nam").c_str(), name);
-  
-  // Mark slot as used
-  preferences.putBool((prefix + "use").c_str(), true);
-  
+  preferences.begin("synth", false);
+  for (const char* sfx : LEGACY_SUFFIXES) {
+    String k = prefix + sfx;
+    if (preferences.isKey(k.c_str())) preferences.remove(k.c_str());
+  }
   preferences.end();
 }
 
+// Returns true if the preset was written successfully
+bool saveUserPreset(int slot, const Preset& preset) {
+  if (slot < 0 || slot >= NUM_USER_PRESETS) return false;
+  StoredPreset sp;
+  memset(&sp, 0, sizeof(sp));
+  sp.version = PRESET_BLOB_VERSION;
+  sp.count = PRESET_FIELDS;
+  presetToArray(preset, sp.v);
+  strncpy(sp.name, preset.name ? preset.name : "User", sizeof(sp.name) - 1);
+
+  removeLegacyKeys(slot);                       // frees space if old entries remain
+  preferences.begin("synth", false);
+  size_t written = preferences.putBytes(blobKey(slot).c_str(), &sp, sizeof(sp));
+  preferences.end();
+  Serial.printf("User preset %d saved: %s (%u bytes), free NVS entries: %u\n",
+                slot + 1, written == sizeof(sp) ? "OK" : "FAILED",
+                (unsigned)written, (unsigned)nvsFreeEntries());
+  return written == sizeof(sp);
+}
+
+static bool readStoredPreset(int slot, StoredPreset& sp) {
+  preferences.begin("synth", true);
+  String k = blobKey(slot);
+  bool ok = preferences.isKey(k.c_str()) &&
+            preferences.getBytesLength(k.c_str()) == sizeof(sp) &&
+            preferences.getBytes(k.c_str(), &sp, sizeof(sp)) == sizeof(sp);
+  preferences.end();
+  return ok && sp.version == PRESET_BLOB_VERSION;
+}
+
 bool loadUserPreset(int slot, Preset& preset) {
+  if (slot < 0 || slot >= NUM_USER_PRESETS) return false;
+  StoredPreset sp;
+  if (readStoredPreset(slot, sp)) {
+    arrayToPreset(sp.v, preset);
+    static char loadedName[21];
+    memcpy(loadedName, sp.name, sizeof(loadedName));
+    loadedName[20] = 0;
+    preset.name = loadedName;
+    return true;
+  }
+  return loadLegacyUserPreset(slot, preset);   // not yet converted
+}
+
+bool isUserPresetUsed(int slot) {
+  if (slot < 0 || slot >= NUM_USER_PRESETS) return false;
+  StoredPreset sp;
+  if (readStoredPreset(slot, sp)) return true;
+  preferences.begin("synth", true);
+  bool used = preferences.getBool(("u" + String(slot) + "_use").c_str(), false);
+  preferences.end();
+  return used;
+}
+
+String getUserPresetName(int slot) {
+  if (slot < 0 || slot >= NUM_USER_PRESETS) return "User";
+  Preset p;
+  if (!loadUserPreset(slot, p)) return "User " + String(slot + 1) + " (Empty)";
+  return String(p.name);
+}
+
+// Converts any old-format user presets to the compact format (run at boot)
+void migrateLegacyPresets() {
+  for (int slot = 0; slot < NUM_USER_PRESETS; slot++) {
+    StoredPreset sp;
+    if (readStoredPreset(slot, sp)) continue;          // already new format
+    Preset p;
+    if (!loadLegacyUserPreset(slot, p)) continue;      // empty slot
+    static char nameCopy[21];
+    strncpy(nameCopy, p.name ? p.name : "User", sizeof(nameCopy) - 1);
+    nameCopy[20] = 0;
+    p.name = nameCopy;
+    Serial.printf("Converting user preset %d (%s) to compact format\n", slot + 1, nameCopy);
+    saveUserPreset(slot, p);                           // removes the old entries first
+  }
+}
+
+bool loadLegacyUserPreset(int slot, Preset& preset) {
   if (slot < 0 || slot >= NUM_USER_PRESETS) return false;
   
   preferences.begin("synth", true);  // Open in read-only mode
@@ -385,33 +486,6 @@ bool loadUserPreset(int slot, Preset& preset) {
   return true;
 }
 
-bool isUserPresetUsed(int slot) {
-  if (slot < 0 || slot >= NUM_USER_PRESETS) return false;
-  
-  preferences.begin("synth", true);
-  String prefix = "u" + String(slot) + "_";
-  bool used = preferences.getBool((prefix + "use").c_str(), false);
-  preferences.end();
-  
-  return used;
-}
-
-String getUserPresetName(int slot) {
-  if (slot < 0 || slot >= NUM_USER_PRESETS) return "User";
-  
-  preferences.begin("synth", true);
-  String prefix = "u" + String(slot) + "_";
-  
-  if (!preferences.getBool((prefix + "use").c_str(), false)) {
-    preferences.end();
-    return "User " + String(slot + 1) + " (Empty)";
-  }
-  
-  String name = preferences.getString((prefix + "nam").c_str(), "User " + String(slot + 1));
-  preferences.end();
-  
-  return name;
-}
 
 void getCurrentSettings(Preset& preset) {
   // This function captures current synth state into a Preset struct
@@ -2052,7 +2126,10 @@ const char HTML_CHUNK_6[] PROGMEM = R"rawliteral(
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: params
-      }).then(r => r.text()).then(msg => {
+      }).then(r => r.text().then(msg => {
+        if (!r.ok) throw new Error(msg);
+        return msg;
+      })).then(msg => {
         console.log(msg);
         // Fetch the actual saved name from server to ensure it matches
         fetch('/getname?slot=' + slot).then(r => r.text()).then(savedName => {
@@ -2066,6 +2143,7 @@ const char HTML_CHUNK_6[] PROGMEM = R"rawliteral(
         document.getElementById('presetName').value = '';
       }).catch(err => {
         console.error('Error saving preset:', err);
+        alert('❌ Preset not saved: ' + err.message);
       });
     }
 
@@ -2747,8 +2825,11 @@ void handleSaveUserPreset() {
       userPreset.pingPong = server.arg("pingPong") == "true";
       userPreset.level = server.arg("level").length() ? server.arg("level").toInt() : 64;
       
-      saveUserPreset(slot, userPreset);
-      server.send(200, "text/plain", "User preset saved to slot " + String(slot));
+      if (saveUserPreset(slot, userPreset)) {
+        server.send(200, "text/plain", "User preset saved to slot " + String(slot));
+      } else {
+        server.send(507, "text/plain", "Save failed: settings storage full");
+      }
     } else {
       server.send(400, "text/plain", "Invalid slot number");
     }
@@ -2953,6 +3034,10 @@ void setup() {
   Serial.println("✓ UART initialized (GPIO17 → STM32 PA10)");
   
   initState();
+  
+  // Convert old-format user presets (one entry per setting) to compact blocks
+  migrateLegacyPresets();
+  Serial.printf("✓ Settings storage: %u free entries\n", (unsigned)nvsFreeEntries());
   
   // Load saved volume and passcode from preferences
   preferences.begin("synth", true);
