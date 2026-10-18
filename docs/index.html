@@ -68,6 +68,9 @@ canvas { width: 100%; height: 130px; display: block; }
 
 .photo-block { background-color: #252320; border: 1px solid #332F2A; border-left: 3px solid #A87820; padding: 40px 28px; margin-bottom: 40px; text-align: center; }
 .photo-block p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A7E74; letter-spacing: 0.08em; text-transform: uppercase; margin: 0; }
+.comments-block { margin-top: 56px; padding-top: 28px; border-top: 1px solid #332F2A; }
+.comments-title { font-family: 'Space Grotesk', sans-serif; font-size: 11px; color: #A87820; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 10px; }
+.comments-note { font-size: 14px; color: #A09890; margin-bottom: 20px; max-width: 640px; }
 .photo-inline { background-color: #252320; border: 1px solid #332F2A; border-left: 3px solid #A87820; padding: 20px; margin-top: 28px; }
 .photo-inline p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A7E74; margin: 0; letter-spacing: 0.06em; }
 
@@ -228,6 +231,11 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A
       <div class="chapter-nav" id="ch-nav"></div>
       <div class="chapter-content" id="ch-content"></div>
     </div>
+    <div class="comments-block">
+      <div class="comments-title">Comments on this chapter</div>
+      <p class="comments-note">Questions, ideas or your own build stories are welcome. Commenting needs a free GitHub account; comments also appear in the project's GitHub Discussions.</p>
+      <div id="comments"></div>
+    </div>
   </div>
 </div>
 
@@ -279,7 +287,7 @@ footer p { font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #8A
     </div>
     <div style="max-width:640px;">
       <p>This site updates as the project evolves. The build log is written as things happen — including the parts that don't work yet.</p>
-      <p>If you're working on something similar and want to compare notes, you can reach me through the <a href="https://github.com/Yorev89/Poly-Synth/issues" target="_blank" style="color:#A87820;">GitHub repository</a>.</p>
+      <p>If you're working on something similar, have a question, or want to compare notes, join the conversation in the project's <a href="https://github.com/Yorev89/Poly-Synth/discussions" target="_blank" style="color:#A87820;">GitHub Discussions</a> (a free GitHub account is needed to post). Found a bug in the firmware? Please report it as an <a href="https://github.com/Yorev89/Poly-Synth/issues" target="_blank" style="color:#A87820;">issue</a>.</p>
     </div>
   </div>
 </div>
@@ -414,9 +422,44 @@ function gcCount(path, title) {
   }
 }
 
+// ---- Comments (giscus: stored in the repo's GitHub Discussions) ----
+// One thread per build chapter ("build-<chapter id>"). The giscus script is
+// loaded only when the Build page is first opened; later chapter changes just
+// tell the existing comment frame to switch thread.
+var giscusLoaded = false;
+function updateComments() {
+  var term = 'build-' + activeChapter;
+  if (!giscusLoaded) {
+    giscusLoaded = true;
+    var s = document.createElement('script');
+    s.src = 'https://giscus.app/client.js';
+    s.setAttribute('data-repo', 'Yorev89/Poly-Synth');
+    s.setAttribute('data-repo-id', 'R_kgDOTd9_Rw');
+    s.setAttribute('data-category', 'Announcements');
+    s.setAttribute('data-category-id', 'DIC_kwDOTd9_R84DI13P');
+    s.setAttribute('data-mapping', 'specific');
+    s.setAttribute('data-term', term);
+    s.setAttribute('data-strict', '1');
+    s.setAttribute('data-reactions-enabled', '1');
+    s.setAttribute('data-emit-metadata', '0');
+    s.setAttribute('data-input-position', 'bottom');
+    s.setAttribute('data-theme', 'dark_dimmed');
+    s.setAttribute('data-lang', 'en');
+    s.setAttribute('crossorigin', 'anonymous');
+    s.async = true;
+    document.getElementById('comments').appendChild(s);
+    return;
+  }
+  var frame = document.querySelector('iframe.giscus-frame');
+  if (frame) {
+    frame.contentWindow.postMessage({ giscus: { setConfig: { term: term } } }, 'https://giscus.app');
+  }
+}
+
 function selectChapter(id) {
   activeChapter = id;
   renderBuild();
+  updateComments();
   var ch = chapters.find(function(c) { return c.id === id; });
   gcCount('/build/' + id, 'Build: ' + (ch ? ch.title : id));
 }
@@ -428,7 +471,7 @@ function showPage(id) {
   var nb = document.getElementById('nav-' + id);
   if (nb) nb.classList.add('active');
   window.scrollTo(0, 0);
-  if (id === 'build') renderBuild();
+  if (id === 'build') { renderBuild(); updateComments(); }
   gcCount('/' + id, 'Section: ' + id);
 }
 
